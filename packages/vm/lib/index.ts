@@ -208,14 +208,14 @@ export default class VM extends AsyncEventEmitter {
     const { opts } = this
 
     if (opts.activatePrecompiles && !opts.stateManager) {
-      this.stateManager.checkpoint()
+      await this.stateManager.checkpoint()
       // put 1 wei in each of the precompiles in order to make the accounts non-empty and thus not have them deduct `callNewAccount` gas.
       await Promise.all(
         Object.keys(precompiles)
           .map((k: string): Buffer => Buffer.from(k, 'hex'))
-          .map((address: Buffer) => {
+          .map(async (address: Buffer) => {
             const account = Account.fromAccountData({ balance: 1 })
-            this.stateManager.putAccount(address, account)
+            await this.stateManager.putAccount(address, account)
           })
       )
       await this.stateManager.commit()
