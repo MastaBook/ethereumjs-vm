@@ -147,13 +147,10 @@ function getPrecompile(address: string, common: Common): PrecompileFunc {
   if (precompiles[address]) {
     const availability = precompileAvailability[address]
     if (
-      availability.type == PrecompileAvailabilityCheck.Hardfork &&
-      common.gteHardfork(availability.param)
-    ) {
-      return precompiles[address]
-    } else if (
-      availability.type == PrecompileAvailabilityCheck.EIP &&
-      common.eips().includes(availability.param)
+      (availability.type == PrecompileAvailabilityCheck.Hardfork &&
+        common.gteHardfork(availability.param)) ||
+      (availability.type == PrecompileAvailabilityCheck.EIP &&
+        common.eips().includes(availability.param))
     ) {
       return precompiles[address]
     }

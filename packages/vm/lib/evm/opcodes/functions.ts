@@ -957,8 +957,8 @@ export const handlers: Map<number, OpHandler> = new Map([
   [
     0xf1,
     async function (runState: RunState) {
-      let [
-        gasLimit,
+      const [
+        currentGasLimit,
         toAddress,
         value,
         inOffset,
@@ -995,7 +995,7 @@ export const handlers: Map<number, OpHandler> = new Map([
         runState.eei.useGas(new BN(runState._common.param('gasPrices', 'callNewAccount')))
       }
 
-      gasLimit = maxCallGas(gasLimit, runState.eei.getGasLeft(), runState)
+      const gasLimit = maxCallGas(currentGasLimit, runState.eei.getGasLeft(), runState)
       // note that TangerineWhistle or later this cannot happen (it could have ran out of gas prior to getting here though)
       if (gasLimit.gt(runState.eei.getGasLeft())) {
         trap(ERROR.OUT_OF_GAS)
@@ -1017,8 +1017,8 @@ export const handlers: Map<number, OpHandler> = new Map([
   [
     0xf2,
     async function (runState: RunState) {
-      let [
-        gasLimit,
+      const [
+        currentGasLimit,
         toAddress,
         value,
         inOffset,
@@ -1033,7 +1033,7 @@ export const handlers: Map<number, OpHandler> = new Map([
       if (!value.isZero()) {
         runState.eei.useGas(new BN(runState._common.param('gasPrices', 'callValueTransfer')))
       }
-      gasLimit = maxCallGas(gasLimit, runState.eei.getGasLeft(), runState)
+      const gasLimit = maxCallGas(currentGasLimit, runState.eei.getGasLeft(), runState)
       // note that TangerineWhistle or later this cannot happen (it could have ran out of gas prior to getting here though)
       if (gasLimit.gt(runState.eei.getGasLeft())) {
         trap(ERROR.OUT_OF_GAS)
@@ -1060,12 +1060,19 @@ export const handlers: Map<number, OpHandler> = new Map([
     0xf4,
     async function (runState: RunState) {
       const value = runState.eei.getCallValue()
-      let [gasLimit, toAddress, inOffset, inLength, outOffset, outLength] = runState.stack.popN(6)
+      const [
+        currentGasLimit,
+        toAddress,
+        inOffset,
+        inLength,
+        outOffset,
+        outLength,
+      ] = runState.stack.popN(6)
       const toAddressBuf = addressToBuffer(toAddress)
 
       subMemUsage(runState, inOffset, inLength)
       subMemUsage(runState, outOffset, outLength)
-      gasLimit = maxCallGas(gasLimit, runState.eei.getGasLeft(), runState)
+      const gasLimit = maxCallGas(currentGasLimit, runState.eei.getGasLeft(), runState)
       // note that TangerineWhistle or later this cannot happen (it could have ran out of gas prior to getting here though)
       if (gasLimit.gt(runState.eei.getGasLeft())) {
         trap(ERROR.OUT_OF_GAS)
@@ -1087,12 +1094,19 @@ export const handlers: Map<number, OpHandler> = new Map([
     0xfa,
     async function (runState: RunState) {
       const value = new BN(0)
-      let [gasLimit, toAddress, inOffset, inLength, outOffset, outLength] = runState.stack.popN(6)
+      const [
+        currentGasLimit,
+        toAddress,
+        inOffset,
+        inLength,
+        outOffset,
+        outLength,
+      ] = runState.stack.popN(6)
       const toAddressBuf = addressToBuffer(toAddress)
 
       subMemUsage(runState, inOffset, inLength)
       subMemUsage(runState, outOffset, outLength)
-      gasLimit = maxCallGas(gasLimit, runState.eei.getGasLeft(), runState) // we set TangerineWhistle or later to true here, as STATICCALL was available from Byzantium (which is after TangerineWhistle)
+      const gasLimit = maxCallGas(currentGasLimit, runState.eei.getGasLeft(), runState) // we set TangerineWhistle or later to true here, as STATICCALL was available from Byzantium (which is after TangerineWhistle)
 
       let data = Buffer.alloc(0)
       if (!inLength.isZero()) {
