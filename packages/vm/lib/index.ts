@@ -1,5 +1,5 @@
 import { SecureTrie as Trie } from 'merkle-patricia-tree'
-import { Account, BN } from 'ethereumjs-util'
+import { Account } from 'ethereumjs-util'
 import Blockchain from '@ethereumjs/blockchain'
 import Common from '@ethereumjs/common'
 import { StateManager, DefaultStateManager } from './state/index'
