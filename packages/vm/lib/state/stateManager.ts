@@ -249,6 +249,7 @@ export default class DefaultStateManager implements StateManager {
     address: Buffer,
     modifyTrie: (storageTrie: Trie, done: Function) => void
   ): Promise<void> {
+    // eslint-disable-next-line no-async-promise-executor
     return new Promise(async (resolve) => {
       const storageTrie = await this._getStorageTrie(address)
 
@@ -424,6 +425,7 @@ export default class DefaultStateManager implements StateManager {
    * Both are represented as hex strings without the `0x` prefix.
    */
   async dumpStorage(address: Buffer): Promise<StorageDump> {
+    // eslint-disable-next-line no-async-promise-executor
     return new Promise(async (resolve) => {
       const trie = await this._getStorageTrie(address)
       const storage: StorageDump = {}

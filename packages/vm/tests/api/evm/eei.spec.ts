@@ -1,5 +1,5 @@
 import tape from 'tape'
-import { Account, BN } from 'ethereumjs-util'
+import { Account } from 'ethereumjs-util'
 import EEI from '../../../lib/evm/eei'
 import StateManager from '../../../lib/state/stateManager'
 
@@ -27,7 +27,7 @@ tape('EEI', (t) => {
       st.ok(await eei.accountExists(ZeroAddress))
       st.notOk(await eei.isAccountEmpty(ZeroAddress))
       st.end()
-    },
+    }
   )
 
   t.test('should return true on existing accounts', async (st) => {
