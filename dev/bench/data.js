@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1607944136748,
+  "lastUpdate": 1608048557006,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "dev@rumk.in",
-            "name": "Paul Rumkin",
-            "username": "rumkin"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "dd5f87d6b8b29e3582608d631fcd29f8c95df560",
-          "message": "docs: Fix Discord link (#901)",
-          "timestamp": "2020-10-06T11:00:09-04:00",
-          "tree_id": "b625dbc045246a110f426fdcc40f9bb138896fca",
-          "url": "https://github.com/ethereumjs/ethereumjs-vm/commit/dd5f87d6b8b29e3582608d631fcd29f8c95df560"
-        },
-        "date": 1601996824492,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1600,
-            "range": "±2.86%",
-            "unit": "ops/sec",
-            "extra": "84 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1695,
-            "range": "±0.97%",
-            "unit": "ops/sec",
-            "extra": "87 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1704,
-            "range": "±0.94%",
-            "unit": "ops/sec",
-            "extra": "90 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1490,
-            "range": "±8.90%",
-            "unit": "ops/sec",
-            "extra": "79 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1631,
-            "range": "±1.55%",
-            "unit": "ops/sec",
-            "extra": "86 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1587,
-            "range": "±4.83%",
-            "unit": "ops/sec",
-            "extra": "80 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1604,
-            "range": "±1.47%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1587,
-            "range": "±1.53%",
-            "unit": "ops/sec",
-            "extra": "81 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1550,
-            "range": "±1.81%",
-            "unit": "ops/sec",
-            "extra": "77 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1530,
-            "range": "±2.00%",
-            "unit": "ops/sec",
-            "extra": "78 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2820,6 +2726,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.18%",
             "unit": "ops/sec",
             "extra": "92 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "913c4701a62e3fd722268f1c43d7570e3c85e96f",
+          "message": "Merge pull request #1015 from ethereumjs/monorepo-add-mpt\n\nMPT monorepo transition",
+          "timestamp": "2020-12-15T11:38:00+01:00",
+          "tree_id": "c3bfa3c459647fbc230cfd022b0733f47a5e7ee9",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/913c4701a62e3fd722268f1c43d7570e3c85e96f"
+        },
+        "date": 1608048555612,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1998,
+            "range": "±2.45%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1955,
+            "range": "±1.18%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1964,
+            "range": "±1.49%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1780,
+            "range": "±9.36%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1970,
+            "range": "±1.65%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1884,
+            "range": "±1.98%",
+            "unit": "ops/sec",
+            "extra": "85 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1852,
+            "range": "±1.47%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1863,
+            "range": "±1.80%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1935,
+            "range": "±2.38%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1677,
+            "range": "±1.38%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
           }
         ]
       }
