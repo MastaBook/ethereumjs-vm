@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1612558112251,
+  "lastUpdate": 1612633104496,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "jochembrouwer96@gmail.com",
-            "name": "Jochem Brouwer",
-            "username": "jochem-brouwer"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "eb05651554ec23d2ba7c46af6e5f5a7bc199f217",
-          "message": "Merge pull request #967 from ethereumjs/fix-selecthardfork-default\n\nVM: fix selectHardforkByBlockNumber default value",
-          "timestamp": "2020-11-27T17:14:56+01:00",
-          "tree_id": "5854e6b58287cf20f44832423adf2eabcc77a80d",
-          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/eb05651554ec23d2ba7c46af6e5f5a7bc199f217"
-        },
-        "date": 1606508637474,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1784,
-            "range": "±2.55%",
-            "unit": "ops/sec",
-            "extra": "88 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1733,
-            "range": "±5.58%",
-            "unit": "ops/sec",
-            "extra": "88 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1814,
-            "range": "±1.16%",
-            "unit": "ops/sec",
-            "extra": "89 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1818,
-            "range": "±0.74%",
-            "unit": "ops/sec",
-            "extra": "92 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1780,
-            "range": "±0.89%",
-            "unit": "ops/sec",
-            "extra": "85 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1743,
-            "range": "±0.88%",
-            "unit": "ops/sec",
-            "extra": "90 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1686,
-            "range": "±1.23%",
-            "unit": "ops/sec",
-            "extra": "90 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1317,
-            "range": "±12.81%",
-            "unit": "ops/sec",
-            "extra": "70 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1689,
-            "range": "±0.70%",
-            "unit": "ops/sec",
-            "extra": "92 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1636,
-            "range": "±1.51%",
-            "unit": "ops/sec",
-            "extra": "79 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2820,6 +2726,100 @@ window.BENCHMARK_DATA = {
             "range": "±18.00%",
             "unit": "ops/sec",
             "extra": "55 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "39d7edbe8477d669644672063623c7134d42f6f9",
+          "message": "Merge pull request #1070 from ethereumjs/eip-1459-dns\n\nImplement EIP-1459: DNS peer discovery",
+          "timestamp": "2021-02-06T15:54:01+01:00",
+          "tree_id": "bee8aec63123997f6609b52f82f8e6a700697def",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/39d7edbe8477d669644672063623c7134d42f6f9"
+        },
+        "date": 1612633103760,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1694,
+            "range": "±3.54%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1633,
+            "range": "±6.02%",
+            "unit": "ops/sec",
+            "extra": "79 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1669,
+            "range": "±1.34%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1552,
+            "range": "±9.24%",
+            "unit": "ops/sec",
+            "extra": "78 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1525,
+            "range": "±8.52%",
+            "unit": "ops/sec",
+            "extra": "79 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1596,
+            "range": "±1.51%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1637,
+            "range": "±1.04%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1611,
+            "range": "±1.38%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1140,
+            "range": "±19.42%",
+            "unit": "ops/sec",
+            "extra": "56 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1555,
+            "range": "±1.48%",
+            "unit": "ops/sec",
+            "extra": "77 samples"
           }
         ]
       }
