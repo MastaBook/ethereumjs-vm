@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1612755494741,
+  "lastUpdate": 1612852712771,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "Holger.Drewes@gmail.com",
-            "name": "Holger Drewes",
-            "username": "holgerd77"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6c0490056cdd1b5c45f6b74f21a0e317e1e5f082",
-          "message": "Merge pull request #973 from ethereumjs/monorepo-add-client\n\nClient monorepo transition",
-          "timestamp": "2020-12-01T21:09:53+01:00",
-          "tree_id": "ac1cdbcd5bc1a6449e11ff5632676146c94e4a8d",
-          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/6c0490056cdd1b5c45f6b74f21a0e317e1e5f082"
-        },
-        "date": 1606865886147,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1764,
-            "range": "±2.45%",
-            "unit": "ops/sec",
-            "extra": "84 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1728,
-            "range": "±5.55%",
-            "unit": "ops/sec",
-            "extra": "83 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1783,
-            "range": "±1.28%",
-            "unit": "ops/sec",
-            "extra": "86 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1593,
-            "range": "±10.34%",
-            "unit": "ops/sec",
-            "extra": "77 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1703,
-            "range": "±1.68%",
-            "unit": "ops/sec",
-            "extra": "84 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1721,
-            "range": "±1.28%",
-            "unit": "ops/sec",
-            "extra": "83 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1706,
-            "range": "±1.20%",
-            "unit": "ops/sec",
-            "extra": "83 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1655,
-            "range": "±1.07%",
-            "unit": "ops/sec",
-            "extra": "87 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1645,
-            "range": "±1.26%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1111,
-            "range": "±18.72%",
-            "unit": "ops/sec",
-            "extra": "54 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2820,6 +2726,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.03%",
             "unit": "ops/sec",
             "extra": "82 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "logvinov.leon@gmail.com",
+            "name": "Leonid Logvinov",
+            "username": "LogvinovLeon"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4cb7fae863a11a5a8a96d53596961f2e463aea54",
+          "message": "VM: Add type definitions for logs (#1084)\n\n* Add type definition for Log",
+          "timestamp": "2021-02-08T17:41:21-08:00",
+          "tree_id": "b424aec125c53b3a2d124580e313462a6abdda36",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/4cb7fae863a11a5a8a96d53596961f2e463aea54"
+        },
+        "date": 1612852711924,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1709,
+            "range": "±2.97%",
+            "unit": "ops/sec",
+            "extra": "85 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1764,
+            "range": "±1.02%",
+            "unit": "ops/sec",
+            "extra": "90 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1709,
+            "range": "±1.24%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1516,
+            "range": "±9.56%",
+            "unit": "ops/sec",
+            "extra": "74 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1643,
+            "range": "±1.25%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1647,
+            "range": "±0.95%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1620,
+            "range": "±1.06%",
+            "unit": "ops/sec",
+            "extra": "85 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1600,
+            "range": "±1.07%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1175,
+            "range": "±16.28%",
+            "unit": "ops/sec",
+            "extra": "61 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1501,
+            "range": "±1.35%",
+            "unit": "ops/sec",
+            "extra": "77 samples"
           }
         ]
       }
