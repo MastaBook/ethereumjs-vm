@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1612852712771,
+  "lastUpdate": 1613069049127,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "Holger.Drewes@gmail.com",
-            "name": "Holger Drewes",
-            "username": "holgerd77"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ab5f032d0a8698694e90341fa860ec0dd79ca18d",
-          "message": "Merge pull request #977 from ethereumjs/devp2p-client-monorepo-integration-housekeeping\n\nDevp2p & Client monorepo integration housekeeping PR",
-          "timestamp": "2020-12-02T22:31:46+01:00",
-          "tree_id": "4e092419b0014522ca08063fb3c3c1ffa644a05a",
-          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/ab5f032d0a8698694e90341fa860ec0dd79ca18d"
-        },
-        "date": 1606964614480,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1792,
-            "range": "±3.06%",
-            "unit": "ops/sec",
-            "extra": "88 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1751,
-            "range": "±1.17%",
-            "unit": "ops/sec",
-            "extra": "88 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1578,
-            "range": "±10.35%",
-            "unit": "ops/sec",
-            "extra": "75 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1656,
-            "range": "±1.26%",
-            "unit": "ops/sec",
-            "extra": "89 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1602,
-            "range": "±1.30%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1572,
-            "range": "±1.70%",
-            "unit": "ops/sec",
-            "extra": "79 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1575,
-            "range": "±1.40%",
-            "unit": "ops/sec",
-            "extra": "78 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1593,
-            "range": "±1.50%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1551,
-            "range": "±1.87%",
-            "unit": "ops/sec",
-            "extra": "78 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1068,
-            "range": "±17.89%",
-            "unit": "ops/sec",
-            "extra": "54 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2818,6 +2724,100 @@ window.BENCHMARK_DATA = {
             "name": "Block 9422914",
             "value": 1501,
             "range": "±1.35%",
+            "unit": "ops/sec",
+            "extra": "77 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a983867f8046c1071f0b97befc7e6f1049772d71",
+          "message": "Merge pull request #1081 from ethereumjs/vm-fix-client-consensus-bug\n\nVM -> Mainnet: fix Frontier consensus bug along CREATE with not enough gas (WIP)",
+          "timestamp": "2021-02-11T17:40:42+01:00",
+          "tree_id": "0641e2955885492171627545ebbb413838e26318",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/a983867f8046c1071f0b97befc7e6f1049772d71"
+        },
+        "date": 1613069047991,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1691,
+            "range": "±4.16%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1745,
+            "range": "±1.47%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1585,
+            "range": "±7.90%",
+            "unit": "ops/sec",
+            "extra": "77 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1690,
+            "range": "±1.02%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1688,
+            "range": "±1.15%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1647,
+            "range": "±1.33%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1678,
+            "range": "±1.43%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1354,
+            "range": "±15.04%",
+            "unit": "ops/sec",
+            "extra": "63 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1678,
+            "range": "±1.88%",
+            "unit": "ops/sec",
+            "extra": "77 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1608,
+            "range": "±2.01%",
             "unit": "ops/sec",
             "extra": "77 samples"
           }
