@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1613090710374,
+  "lastUpdate": 1613156087727,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "Holger.Drewes@gmail.com",
-            "name": "Holger Drewes",
-            "username": "holgerd77"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5cf640802eddc266f0e445cc15e60cd9f3a00b95",
-          "message": "Merge pull request #1007 from ethereumjs/update-package-diagram\n\nUpdate package relationship diagram",
-          "timestamp": "2020-12-07T11:07:01+01:00",
-          "tree_id": "a9acf8b5e160644b75f88b8d12c9a7ebe8df643b",
-          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/5cf640802eddc266f0e445cc15e60cd9f3a00b95"
-        },
-        "date": 1607347076127,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1977,
-            "range": "±2.88%",
-            "unit": "ops/sec",
-            "extra": "87 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1912,
-            "range": "±4.48%",
-            "unit": "ops/sec",
-            "extra": "84 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1800,
-            "range": "±9.31%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1944,
-            "range": "±1.37%",
-            "unit": "ops/sec",
-            "extra": "86 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1908,
-            "range": "±1.09%",
-            "unit": "ops/sec",
-            "extra": "91 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1568,
-            "range": "±12.39%",
-            "unit": "ops/sec",
-            "extra": "73 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1873,
-            "range": "±1.57%",
-            "unit": "ops/sec",
-            "extra": "86 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1857,
-            "range": "±1.14%",
-            "unit": "ops/sec",
-            "extra": "91 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1815,
-            "range": "±1.19%",
-            "unit": "ops/sec",
-            "extra": "90 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1719,
-            "range": "±1.35%",
-            "unit": "ops/sec",
-            "extra": "89 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2820,6 +2726,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.55%",
             "unit": "ops/sec",
             "extra": "77 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "139d90ec507fa97b39c4b04b13366146c8edcbba",
+          "message": "Merge pull request #1101 from ethereumjs/fix-vm-client-hf-switching\n\nVM/Client: fix HF switching. Fix TangerineWhistle update bug.",
+          "timestamp": "2021-02-12T16:11:38+01:00",
+          "tree_id": "9780a85c38898abc7673a5984d02df65d7aed9c2",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/139d90ec507fa97b39c4b04b13366146c8edcbba"
+        },
+        "date": 1613156086978,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1649,
+            "range": "±3.73%",
+            "unit": "ops/sec",
+            "extra": "91 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1662,
+            "range": "±1.00%",
+            "unit": "ops/sec",
+            "extra": "93 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1596,
+            "range": "±2.11%",
+            "unit": "ops/sec",
+            "extra": "90 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1470,
+            "range": "±9.51%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1591,
+            "range": "±1.13%",
+            "unit": "ops/sec",
+            "extra": "92 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1537,
+            "range": "±1.73%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1476,
+            "range": "±1.93%",
+            "unit": "ops/sec",
+            "extra": "88 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1537,
+            "range": "±1.93%",
+            "unit": "ops/sec",
+            "extra": "92 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1529,
+            "range": "±1.35%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1451,
+            "range": "±1.26%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
           }
         ]
       }
