@@ -1,102 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1613176701987,
+  "lastUpdate": 1613306097435,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "Holger.Drewes@gmail.com",
-            "name": "Holger Drewes",
-            "username": "holgerd77"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "60ed11bbae151b26b151598f0a52c813f719ec6c",
-          "message": "Merge pull request #1010 from ethereumjs/type-boundprotocol\n\nclient: type BoundProtocol messages",
-          "timestamp": "2020-12-10T09:30:41+01:00",
-          "tree_id": "9d730ea53c6ee30ce8c1184c7e73b70f6081e61d",
-          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/60ed11bbae151b26b151598f0a52c813f719ec6c"
-        },
-        "date": 1607591348999,
-        "tool": "benchmarkjs",
-        "benches": [
-          {
-            "name": "Block 9422905",
-            "value": 1945,
-            "range": "±4.26%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422906",
-            "value": 1831,
-            "range": "±7.59%",
-            "unit": "ops/sec",
-            "extra": "76 samples"
-          },
-          {
-            "name": "Block 9422907",
-            "value": 1868,
-            "range": "±1.76%",
-            "unit": "ops/sec",
-            "extra": "82 samples"
-          },
-          {
-            "name": "Block 9422908",
-            "value": 1867,
-            "range": "±1.70%",
-            "unit": "ops/sec",
-            "extra": "80 samples"
-          },
-          {
-            "name": "Block 9422909",
-            "value": 1629,
-            "range": "±12.00%",
-            "unit": "ops/sec",
-            "extra": "72 samples"
-          },
-          {
-            "name": "Block 9422910",
-            "value": 1836,
-            "range": "±1.83%",
-            "unit": "ops/sec",
-            "extra": "75 samples"
-          },
-          {
-            "name": "Block 9422911",
-            "value": 1831,
-            "range": "±1.72%",
-            "unit": "ops/sec",
-            "extra": "81 samples"
-          },
-          {
-            "name": "Block 9422912",
-            "value": 1812,
-            "range": "±2.22%",
-            "unit": "ops/sec",
-            "extra": "76 samples"
-          },
-          {
-            "name": "Block 9422913",
-            "value": 1723,
-            "range": "±1.78%",
-            "unit": "ops/sec",
-            "extra": "83 samples"
-          },
-          {
-            "name": "Block 9422914",
-            "value": 1642,
-            "range": "±2.24%",
-            "unit": "ops/sec",
-            "extra": "77 samples"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -2820,6 +2726,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.87%",
             "unit": "ops/sec",
             "extra": "83 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "761bef0454ec1ac299fb5afe62558da1b52cafa5",
+          "message": "Merge pull request #1103 from ethereumjs/fix-goerli-clique-difficulty-bug\n\nClient, Blockchain: Fix Goerli Clique Difficulty Bug",
+          "timestamp": "2021-02-14T09:34:57+01:00",
+          "tree_id": "912f78eb8a9a182f8064fdb83d9e2025720fe833",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/761bef0454ec1ac299fb5afe62558da1b52cafa5"
+        },
+        "date": 1613306096736,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1810,
+            "range": "±4.07%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1716,
+            "range": "±7.27%",
+            "unit": "ops/sec",
+            "extra": "75 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1770,
+            "range": "±7.25%",
+            "unit": "ops/sec",
+            "extra": "79 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1694,
+            "range": "±2.25%",
+            "unit": "ops/sec",
+            "extra": "75 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1826,
+            "range": "±1.56%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1495,
+            "range": "±12.07%",
+            "unit": "ops/sec",
+            "extra": "71 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1830,
+            "range": "±1.81%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1767,
+            "range": "±1.80%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1730,
+            "range": "±1.97%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1374,
+            "range": "±15.12%",
+            "unit": "ops/sec",
+            "extra": "66 samples"
           }
         ]
       }
