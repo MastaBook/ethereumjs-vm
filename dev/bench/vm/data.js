@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1615294262974,
+  "lastUpdate": 1615463812381,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
@@ -564,6 +564,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.27%",
             "unit": "ops/sec",
             "extra": "85 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "892d332e7253679c3e517b9a6bd7dea95f124da3",
+          "message": "Merge pull request #1145 from ethereumjs/client-split-cli-transport-options\n\nClient: split CLI transports options for bootnodes and multiaddrs",
+          "timestamp": "2021-03-11T08:57:10+01:00",
+          "tree_id": "e4e8160e8d6e82a324ddc5958e2f57d45a8045fe",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/892d332e7253679c3e517b9a6bd7dea95f124da3"
+        },
+        "date": 1615463811633,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1600,
+            "range": "±4.28%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1591,
+            "range": "±4.30%",
+            "unit": "ops/sec",
+            "extra": "86 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1499,
+            "range": "±9.07%",
+            "unit": "ops/sec",
+            "extra": "84 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1624,
+            "range": "±1.31%",
+            "unit": "ops/sec",
+            "extra": "90 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1636,
+            "range": "±0.85%",
+            "unit": "ops/sec",
+            "extra": "91 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1255,
+            "range": "±12.20%",
+            "unit": "ops/sec",
+            "extra": "73 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1512,
+            "range": "±0.91%",
+            "unit": "ops/sec",
+            "extra": "90 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1552,
+            "range": "±1.15%",
+            "unit": "ops/sec",
+            "extra": "88 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1530,
+            "range": "±1.55%",
+            "unit": "ops/sec",
+            "extra": "81 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1514,
+            "range": "±1.08%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
           }
         ]
       }
