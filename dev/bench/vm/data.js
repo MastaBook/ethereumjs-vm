@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1615516700937,
+  "lastUpdate": 1615560846152,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
@@ -846,6 +846,100 @@ window.BENCHMARK_DATA = {
             "range": "±1.65%",
             "unit": "ops/sec",
             "extra": "81 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2c455a7666708955827d2f1fbe7c929a9d568ff9",
+          "message": "Merge pull request #1067 from ethereumjs/client-bootstrap\n\nClient: Save node key",
+          "timestamp": "2021-03-12T10:07:34+01:00",
+          "tree_id": "d4c60700df986ef03bb2fcff6c6bdca2eb7718e2",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/2c455a7666708955827d2f1fbe7c929a9d568ff9"
+        },
+        "date": 1615560840840,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "Block 9422905",
+            "value": 1566,
+            "range": "±3.37%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422906",
+            "value": 1535,
+            "range": "±4.70%",
+            "unit": "ops/sec",
+            "extra": "82 samples"
+          },
+          {
+            "name": "Block 9422907",
+            "value": 1564,
+            "range": "±0.91%",
+            "unit": "ops/sec",
+            "extra": "85 samples"
+          },
+          {
+            "name": "Block 9422908",
+            "value": 1580,
+            "range": "±1.11%",
+            "unit": "ops/sec",
+            "extra": "88 samples"
+          },
+          {
+            "name": "Block 9422909",
+            "value": 1465,
+            "range": "±6.90%",
+            "unit": "ops/sec",
+            "extra": "78 samples"
+          },
+          {
+            "name": "Block 9422910",
+            "value": 1303,
+            "range": "±11.94%",
+            "unit": "ops/sec",
+            "extra": "74 samples"
+          },
+          {
+            "name": "Block 9422911",
+            "value": 1539,
+            "range": "±0.75%",
+            "unit": "ops/sec",
+            "extra": "88 samples"
+          },
+          {
+            "name": "Block 9422912",
+            "value": 1481,
+            "range": "±1.25%",
+            "unit": "ops/sec",
+            "extra": "83 samples"
+          },
+          {
+            "name": "Block 9422913",
+            "value": 1453,
+            "range": "±0.78%",
+            "unit": "ops/sec",
+            "extra": "87 samples"
+          },
+          {
+            "name": "Block 9422914",
+            "value": 1428,
+            "range": "±1.45%",
+            "unit": "ops/sec",
+            "extra": "80 samples"
           }
         ]
       }
