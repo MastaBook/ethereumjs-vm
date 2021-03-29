@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1615650088707,
+  "lastUpdate": 1617051570984,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
@@ -609,6 +609,93 @@ window.BENCHMARK_DATA = {
             "range": "±11.21%",
             "unit": "ops/sec",
             "extra": "35 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "christophergewecke@gmail.com",
+            "name": "cgewecke",
+            "username": "cgewecke"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "71c54f6917c79465fc1025f009a9e0d45c2cbf36",
+          "message": "Merge pull request #1172 from ethereumjs/disable-e2e-temporarily\n\nTemporarily disable e2e tests (due to intermittent failures)",
+          "timestamp": "2021-03-29T10:27:54-07:00",
+          "tree_id": "5fb7e021d5fdc79bab2899c3162c0bc05de646f7",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/71c54f6917c79465fc1025f009a9e0d45c2cbf36"
+        },
+        "date": 1617051569820,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "1k-3-32-ran",
+            "value": 15058,
+            "range": "±14.92%",
+            "unit": "ops/sec",
+            "extra": "65 samples"
+          },
+          {
+            "name": "1k-5-32-ran",
+            "value": 15716,
+            "range": "±2.15%",
+            "unit": "ops/sec",
+            "extra": "70 samples"
+          },
+          {
+            "name": "1k-9-32-ran",
+            "value": 17567,
+            "range": "±2.73%",
+            "unit": "ops/sec",
+            "extra": "74 samples"
+          },
+          {
+            "name": "1k-1k-32-ran",
+            "value": 14598,
+            "range": "±8.78%",
+            "unit": "ops/sec",
+            "extra": "68 samples"
+          },
+          {
+            "name": "1k-1k-32-mir",
+            "value": 5461,
+            "range": "±26.52%",
+            "unit": "ops/sec",
+            "extra": "50 samples"
+          },
+          {
+            "name": "Checkpointing: 100 iterations",
+            "value": 1215,
+            "range": "±6.61%",
+            "unit": "ops/sec",
+            "extra": "62 samples"
+          },
+          {
+            "name": "Checkpointing: 500 iterations",
+            "value": 133,
+            "range": "±98.07%",
+            "unit": "ops/sec",
+            "extra": "35 samples"
+          },
+          {
+            "name": "Checkpointing: 1000 iterations",
+            "value": 120,
+            "range": "±14.51%",
+            "unit": "ops/sec",
+            "extra": "55 samples"
+          },
+          {
+            "name": "Checkpointing: 5000 iterations",
+            "value": 29.41,
+            "range": "±12.37%",
+            "unit": "ops/sec",
+            "extra": "19 samples"
           }
         ]
       }
