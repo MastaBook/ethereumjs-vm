@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1618297469267,
+  "lastUpdate": 1619010299169,
   "repoUrl": "https://github.com/MastaBook/ethereumjs-vm",
   "entries": {
     "Benchmark": [
@@ -1305,6 +1305,93 @@ window.BENCHMARK_DATA = {
             "range": "±98.62%",
             "unit": "ops/sec",
             "extra": "17 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "Holger.Drewes@gmail.com",
+            "name": "Holger Drewes",
+            "username": "holgerd77"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19e2c496a6a79ada81120a136172d5d38a90633e",
+          "message": "Merge pull request #1212 from ethereumjs/statemanager-fix-buffer-comparison\n\nStateManager: fix buffer comparison in setStateRoot",
+          "timestamp": "2021-04-21T09:30:30+02:00",
+          "tree_id": "1a1c6328dbe66ce3fa67ab836eef182fe3a81fb8",
+          "url": "https://github.com/MastaBook/ethereumjs-vm/commit/19e2c496a6a79ada81120a136172d5d38a90633e"
+        },
+        "date": 1619010297973,
+        "tool": "benchmarkjs",
+        "benches": [
+          {
+            "name": "1k-3-32-ran",
+            "value": 13087,
+            "range": "±15.54%",
+            "unit": "ops/sec",
+            "extra": "64 samples"
+          },
+          {
+            "name": "1k-5-32-ran",
+            "value": 14796,
+            "range": "±6.11%",
+            "unit": "ops/sec",
+            "extra": "75 samples"
+          },
+          {
+            "name": "1k-9-32-ran",
+            "value": 14633,
+            "range": "±3.14%",
+            "unit": "ops/sec",
+            "extra": "76 samples"
+          },
+          {
+            "name": "1k-1k-32-ran",
+            "value": 14005,
+            "range": "±3.67%",
+            "unit": "ops/sec",
+            "extra": "76 samples"
+          },
+          {
+            "name": "1k-1k-32-mir",
+            "value": 5985,
+            "range": "±38.25%",
+            "unit": "ops/sec",
+            "extra": "30 samples"
+          },
+          {
+            "name": "Checkpointing: 100 iterations",
+            "value": 1095,
+            "range": "±6.95%",
+            "unit": "ops/sec",
+            "extra": "63 samples"
+          },
+          {
+            "name": "Checkpointing: 500 iterations",
+            "value": 139,
+            "range": "±81.56%",
+            "unit": "ops/sec",
+            "extra": "49 samples"
+          },
+          {
+            "name": "Checkpointing: 1000 iterations",
+            "value": 110,
+            "range": "±23.24%",
+            "unit": "ops/sec",
+            "extra": "58 samples"
+          },
+          {
+            "name": "Checkpointing: 5000 iterations",
+            "value": 10.31,
+            "range": "±118.42%",
+            "unit": "ops/sec",
+            "extra": "26 samples"
           }
         ]
       }
