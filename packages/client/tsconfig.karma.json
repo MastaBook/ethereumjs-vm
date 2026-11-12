@@ -1,7 +1,0 @@
-{
-  "extends": "@ethereumjs/config-typescript",
-  "include": ["bin", "lib", "test"],
-  "compilerOptions": {
-    "skipLibCheck": true,
-  }
-}

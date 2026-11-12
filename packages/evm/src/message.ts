@@ -1,0 +1,120 @@
+import { BIGINT_0, EthereumJSErrorWithoutCode, createZeroAddress } from '@ethereumjs/util'
+
+import type { BinaryTreeAccessWitnessInterface } from '@ethereumjs/common'
+import type { Address, PrefixedHexString } from '@ethereumjs/util'
+import type { PrecompileFunc } from './precompiles/index.ts'
+import type { SelfdestructMap } from './types.ts'
+
+const defaults = {
+  value: BIGINT_0,
+  caller: createZeroAddress(),
+  data: new Uint8Array(0),
+  depth: 0,
+  isStatic: false,
+  isCompiled: false,
+  delegatecall: false,
+  gasRefund: BIGINT_0,
+}
+
+interface MessageOpts {
+  to?: Address
+  value?: bigint
+  caller?: Address
+  gasLimit: bigint
+  data?: Uint8Array
+  depth?: number
+  code?: Uint8Array | PrecompileFunc
+  codeAddress?: Address
+  isStatic?: boolean
+  isCompiled?: boolean
+  salt?: Uint8Array
+  /**
+   * Selfdestructed addresses mapped to their beneficiary, see {@link Message.selfdestruct}
+   */
+  selfdestruct?: SelfdestructMap
+  /**
+   * Map of addresses which were created (used in EIP 6780)
+   */
+  createdAddresses?: Set<PrefixedHexString>
+  delegatecall?: boolean
+  gasRefund?: bigint
+  blobVersionedHashes?: PrefixedHexString[]
+  accessWitness?: BinaryTreeAccessWitnessInterface
+}
+
+/** Call or create message passed into {@link EVM.runCall}. */
+export class Message {
+  to?: Address
+  value: bigint
+  caller: Address
+  gasLimit: bigint
+  data: Uint8Array
+  isCreate?: boolean
+  depth: number
+  code?: Uint8Array | PrecompileFunc
+  _codeAddress?: Address
+  isStatic: boolean
+  isCompiled: boolean
+  salt?: Uint8Array
+  chargeCodeAccesses?: boolean
+  /**
+   * Selfdestructed addresses mapped to their beneficiary.
+   */
+  selfdestruct?: SelfdestructMap
+  /**
+   * Map of addresses which were created (used in EIP 6780)
+   */
+  createdAddresses?: Set<PrefixedHexString>
+  delegatecall: boolean
+  gasRefund: bigint // Keeps track of the gasRefund at the start of the frame (used for journaling purposes)
+  /**
+   * List of versioned hashes if message is a blob transaction in the outer VM
+   */
+  blobVersionedHashes?: PrefixedHexString[]
+  accessWitness?: BinaryTreeAccessWitnessInterface
+  /**
+   * EIP-8037: set by the EVM during creation-message execution when the
+   * create target account was already alive (EIP-161 non-empty). The caller
+   * refunds the new-account state gas in that case.
+   *
+   * @remarks Experimental (Amsterdam): may change on patch releases.
+   */
+  createdTargetAlive?: boolean
+
+  constructor(opts: MessageOpts) {
+    this.to = opts.to
+    this.value = opts.value ?? defaults.value
+    this.caller = opts.caller ?? defaults.caller
+    this.gasLimit = opts.gasLimit
+    this.data = opts.data ?? defaults.data
+    this.depth = opts.depth ?? defaults.depth
+    this.code = opts.code
+    this._codeAddress = opts.codeAddress
+    this.isStatic = opts.isStatic ?? defaults.isStatic
+    this.isCompiled = opts.isCompiled ?? defaults.isCompiled
+    this.salt = opts.salt
+    this.selfdestruct = opts.selfdestruct
+    this.createdAddresses = opts.createdAddresses
+    this.delegatecall = opts.delegatecall ?? defaults.delegatecall
+    this.gasRefund = opts.gasRefund ?? defaults.gasRefund
+    this.blobVersionedHashes = opts.blobVersionedHashes
+    this.accessWitness = opts.accessWitness
+    if (this.value < 0) {
+      throw EthereumJSErrorWithoutCode(`value field cannot be negative, received ${this.value}`)
+    }
+  }
+
+  /**
+   * Note: should only be called in instances where `_codeAddress` or `to` is defined.
+   */
+  get codeAddress(): Address {
+    const codeAddress = this._codeAddress ?? this.to
+    if (!codeAddress) {
+      throw EthereumJSErrorWithoutCode('Missing codeAddress')
+    }
+    return codeAddress
+  }
+}
+
+/** {@link Message} with a required `to` address (post-resolution). */
+export type MessageWithTo = Message & Pick<Required<MessageOpts>, 'to'>

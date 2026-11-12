@@ -1,9 +1,0 @@
-{
-  "extends": "@ethereumjs/config-typescript/tsconfig.browser.json",
-  "include": ["browser/index.ts"],
-  "exclude": ["lib/index.js"],
-  "compilerOptions": {
-    "target": "ES2017",
-    "outDir": "dist.browser",
-  }
-}

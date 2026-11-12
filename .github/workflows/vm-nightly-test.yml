@@ -2,9 +2,12 @@ name: VM Nightly
 on:
   schedule:
     - cron: 0 0 * * *
+  workflow_dispatch:
 
 env:
   cwd: ${{github.workspace}}/packages/vm
+  EST_FIXTURES_CACHE: ${{ github.workspace }}/.est-fixtures-cache
+  LEGACY_ETHEREUM_TESTS_CACHE: ${{ github.workspace }}/.legacy-ethereum-tests-cache
 
 defaults:
   run:
@@ -12,117 +15,148 @@ defaults:
 
 jobs:
   test-vm-api:
+    if: github.repository == 'ethereumjs/ethereumjs-monorepo'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
+          node-version: 26
+          cache: 'npm'
 
-      # This is specific to Nightly test 1/2.
-      # The job needs to run with a fresh combination of lockfiles, to warm up the cache.
-      # So in this step, we remove the lockfiles
-      - run: rm package-lock.json packages/*/package-lock.json
-        working-directory: ${{github.workspace}}
-
-      # This is specific to Nightly test 2/2.
-      # Here, we generate new lockfiles
-      - run: npm install
-        working-directory: ${{github.workspace}}
-
-      - run: npm run build
+      - name: Install Dependencies
+        run: npm ci
         working-directory: ${{github.workspace}}
 
       - run: npm run test:API
-      - run: npm run test:API:browser
 
-  test-vm-state:
+  nightly-est-fork-matrix:
+    if: github.repository == 'ethereumjs/ethereumjs-monorepo'
     runs-on: ubuntu-latest
+    outputs:
+      forks: ${{ steps.matrix.outputs.forks }}
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
+          node-version: 26
+          cache: npm
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: ${{ github.workspace }}
+      - id: matrix
+        working-directory: packages/vm
+        run: echo "forks=$(npx tsx ./test/consensus/scripts/printEstForkMatrix.ts)" >> $GITHUB_OUTPUT
 
-      # This is specific to Nightly test 1/2.
-      # The job needs to run with a fresh combination of lockfiles, to warm up the cache.
-      # So in this step, we remove the lockfiles
-      - run: rm package-lock.json packages/*/package-lock.json
-        working-directory: ${{github.workspace}}
-
-      # This is specific to Nightly test 2/2.
-      # Here, we generate new lockfiles
-      - run: npm install
-        working-directory: ${{github.workspace}}
-
-      - run: npm run build
-        working-directory: ${{github.workspace}}
-
-      - run: npm run test:state:allForks
-
-  test-vm-blockchain:
+  test-vm-consensus-est:
+    needs: nightly-est-fork-matrix
+    if: github.repository == 'ethereumjs/ethereumjs-monorepo'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fork: ${{ fromJson(needs.nightly-est-fork-matrix.outputs.forks) }}
     steps:
-      - uses: actions/setup-node@v1
-        with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      # This is specific to Nightly test 1/2.
-      # The job needs to run with a fresh combination of lockfiles, to warm up the cache.
-      # So in this step, we remove the lockfiles
-      - run: rm package-lock.json packages/*/package-lock.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 26
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
         working-directory: ${{github.workspace}}
 
-      # This is specific to Nightly test 2/2.
-      # Here, we generate new lockfiles
-      - run: npm install
-        working-directory: ${{github.workspace}}
-
-      # This is specific to Nightly test 3/2.
-      # In the case lockfiles a.re not so fresh, use information from cache
-      - name: Dependency cache.
-      # We need this to save cache afterwards, so other jobs can benefit from it.
-        uses: actions/cache@v2
-        id: cache
+      - uses: ./.github/actions/consensus-fork
         with:
-          key: VM-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
+          source: tests
+          manifest: fixtures.json
+          cache-key: est-extract-tests-${{ hashFiles('packages/vm/test/consensus/fixtures.json') }}-${{ matrix.fork }}
+          fork: ${{ matrix.fork }}
+          artifact-prefix: consensus-est-failures
+          save-cache: 'false'
+          extra-test-args: '--run-skipped slow'
 
-      - run: npm run build
+  test-vm-consensus-legacy:
+    if: github.repository == 'ethereumjs/ethereumjs-monorepo'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        legacy_fork:
+          [
+            'Prague',
+            'Cancun',
+            'Shanghai',
+            'Paris',
+            'London',
+            'Berlin',
+            'Istanbul',
+            'ConstantinopleFix',
+            'Byzantium',
+            'EIP158',
+            'EIP150',
+            'Homestead',
+            'Frontier',
+            'ByzantiumToConstantinopleFixAt5',
+            'EIP158ToByzantiumAt5',
+            'FrontierToHomesteadAt5',
+            'HomesteadToDaoAt5',
+            'HomesteadToEIP150At5',
+            'BerlinToLondonAt5',
+          ]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 26
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
         working-directory: ${{github.workspace}}
 
-      - run: npm run test:blockchain:allForks
-        working-directory: '${{ env.cwd }}'
+      - uses: ./.github/actions/legacy-ethereum-tests
+        with:
+          slice: blockchain
+          cache-key: legacy-tests-${{ hashFiles('config/legacy-ethereum-tests.json') }}-blockchain
+
+      - run: npm run test:consensus -- --source legacy --format blockchain --legacy-fork ${{ matrix.legacy_fork }} --run-skipped slow
 
   test-vm-slow:
+    if: github.repository == 'ethereumjs/ethereumjs-monorepo'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        testFile:
+          [
+            'Call50000_sha256',
+            'CALLBlake2f_MaxRounds',
+            'Return50000',
+            'Return50000_2',
+            'static_Call50000_sha256',
+            'loopMul',
+            'loopExp',
+          ]
+      fail-fast: false
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
-      
-      # This is specific to Nightly test 1/2.
-      # The job needs to run with a fresh combination of lockfiles, to warm up the cache.
-      # So in this step, we remove the lockfiles
-      - run: rm package-lock.json packages/*/package-lock.json
+          node-version: 26
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
         working-directory: ${{github.workspace}}
 
-      # This is specific to Nightly test 2/2.
-      # Here, we generate new lockfiles
-      - run: npm install
-        working-directory: ${{github.workspace}}
+      - uses: ./.github/actions/legacy-ethereum-tests
+        with:
+          slice: blockchain
+          cache-key: legacy-tests-${{ hashFiles('config/legacy-ethereum-tests.json') }}-blockchain
 
-      - run: npm run build
-        working-directory: ${{github.workspace}}
-      
-      - run: npm run test:state:slow
+      - run: npm run test:consensus -- --source legacy --format blockchain --legacy-fork Prague --file=${{ matrix.testFile }} --run-skipped slow

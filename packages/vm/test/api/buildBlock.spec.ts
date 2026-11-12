@@ -1,0 +1,453 @@
+import {
+  cliqueSigner,
+  cliqueVerifySignature,
+  createBlock,
+  createSealedCliqueBlock,
+} from '@ethereumjs/block'
+import { EthashConsensus, createBlockchain } from '@ethereumjs/blockchain'
+import {
+  Common,
+  ConsensusAlgorithm,
+  type GethGenesis,
+  Hardfork,
+  Mainnet,
+  createCommonFromGethGenesis,
+} from '@ethereumjs/common'
+import { Ethash } from '@ethereumjs/ethash'
+import { createBlob4844Tx, createFeeMarket1559Tx, createLegacyTx } from '@ethereumjs/tx'
+import { type KZG, concatBytes, createAccount, createZeroAddress } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
+
+import { buildBlock, createVM, runBlock } from '../../src/index.ts'
+
+import { setBalance } from './utils.ts'
+
+import type { Blockchain, ConsensusDict } from '@ethereumjs/blockchain'
+import { SIGNER_A } from '@ethereumjs/testdata'
+
+describe('[VM/BlockBuilder]: buildBlock API', () => {
+  it('builds a valid block', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = createBlock({ header: { gasLimit: 50000 } }, { common })
+    const blockchain = await createBlockchain({ genesisBlock, common, validateConsensus: false })
+    const vm = await createVM({ common, blockchain })
+
+    await setBalance(vm, SIGNER_A.address)
+
+    const vmCopy = await vm.shallowCopy()
+
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      headerData: { coinbase: '0x96dc73c8b5969608c77375f085949744b5177660' },
+      blockOpts: { calcDifficultyFromHeader: genesisBlock.header, freeze: false },
+    })
+
+    // Set up tx
+    const tx = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    await blockBuilder.addTransaction(tx)
+    const { block } = await blockBuilder.build()
+    assert.strictEqual(
+      blockBuilder.transactionReceipts.length,
+      1,
+      'should have the correct number of tx receipts',
+    )
+    const result = await runBlock(vmCopy, { block })
+    assert.strictEqual(result.gasUsed, block.header.gasUsed)
+    assert.deepEqual(result.receiptsRoot, block.header.receiptTrie)
+    assert.deepEqual(result.stateRoot, block.header.stateRoot)
+    assert.deepEqual(result.logsBloom, block.header.logsBloom)
+  })
+
+  it('throws if adding a transaction exceeds the block gas limit', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
+    const vm = await createVM({ common })
+    const genesis = createBlock({}, { common })
+
+    const blockBuilder = await buildBlock(vm, { parentBlock: genesis })
+    const gasLimit = genesis.header.gasLimit + BigInt(1)
+    const tx = createLegacyTx({ gasLimit }, { common })
+    try {
+      await blockBuilder.addTransaction(tx)
+      assert.fail('should throw error')
+    } catch (error: any) {
+      if (
+        (error.message as string).includes(
+          'tx has a higher gas limit than the remaining gas in the block',
+        )
+      ) {
+        assert.isTrue(true, 'correct error thrown')
+      } else {
+        assert.fail('wrong error thrown')
+      }
+    }
+    assert.strictEqual(
+      blockBuilder.transactionReceipts.length,
+      0,
+      'should have the correct number of tx receipts',
+    )
+  })
+
+  it('leaves the builder unchanged when a blob tx exceeds the Osaka per-tx cap', async () => {
+    const stubKzg = {} as KZG
+    const prague = new Common({
+      chain: Mainnet,
+      hardfork: Hardfork.Prague,
+      customCrypto: { kzg: stubKzg },
+    })
+    const osaka = new Common({
+      chain: Mainnet,
+      hardfork: Hardfork.Osaka,
+      customCrypto: { kzg: stubKzg },
+    })
+    // Keep the pinned fork when the blockchain re-reads block 0.
+    osaka.getHardforkBy = () => Hardfork.Osaka
+    const genesisBlock = createBlock(
+      {
+        header: {
+          gasLimit: 30_000_000n,
+          parentBeaconBlockRoot: new Uint8Array(32),
+        },
+      },
+      { common: osaka },
+    )
+    const blockchain = await createBlockchain({
+      genesisBlock,
+      common: osaka,
+      validateBlocks: false,
+      validateConsensus: false,
+    })
+    const vm = await createVM({ common: osaka, blockchain })
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      withdrawals: [],
+      headerData: { gasLimit: 30_000_000n },
+      blockOpts: { freeze: false },
+    })
+    const stateRootAfterInit = await vm.stateManager.getStateRoot()
+
+    const hash = concatBytes(new Uint8Array([1]), new Uint8Array(31))
+    const tx = createBlob4844Tx(
+      {
+        blobVersionedHashes: Array.from({ length: 7 }, () => hash),
+        maxFeePerBlobGas: 1n,
+        maxFeePerGas: 1n,
+        maxPriorityFeePerGas: 1n,
+        gasLimit: 100_000n,
+        to: createZeroAddress(),
+      },
+      { common: prague },
+    )
+
+    try {
+      await blockBuilder.addTransaction(tx, { allowNoBlobs: true })
+      assert.fail('should throw')
+    } catch (error: unknown) {
+      assert.match((error as Error).message, /7 blobs exceeds max 6 blobs per tx \(EIP-7594\)/)
+    }
+
+    assert.strictEqual(blockBuilder.blobGasUsed, 0n, 'blob gas stays at zero')
+    assert.strictEqual(blockBuilder.gasUsed, 0n, 'gas used stays at zero')
+    assert.strictEqual(blockBuilder.transactionReceipts.length, 0, 'tx is not kept')
+    assert.deepEqual(
+      await vm.stateManager.getStateRoot(),
+      stateRootAfterInit,
+      'state root is unchanged',
+    )
+
+    const { block } = await blockBuilder.build()
+    assert.strictEqual(block.transactions.length, 0, 'built block has no transactions')
+    assert.strictEqual(block.header.blobGasUsed, 0n, 'built header blob gas stays at zero')
+  })
+
+  it('seal a PoW block', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = createBlock({ header: { gasLimit: 50000 } }, { common })
+
+    const consensusDict: ConsensusDict = {}
+    consensusDict[ConsensusAlgorithm.Ethash] = new EthashConsensus(new Ethash())
+    const blockchain = await createBlockchain({
+      genesisBlock,
+      common,
+      validateConsensus: false,
+      consensusDict,
+    })
+    const vm = await createVM({ common, blockchain })
+
+    await setBalance(vm, SIGNER_A.address)
+
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      blockOpts: { calcDifficultyFromHeader: genesisBlock.header, freeze: false },
+    })
+
+    // Set up tx
+    const tx = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    await blockBuilder.addTransaction(tx)
+
+    const sealOpts = {
+      mixHash: new Uint8Array(32),
+      nonce: new Uint8Array(8),
+    }
+    const { block } = await blockBuilder.build(sealOpts)
+
+    assert.deepEqual(block.header.mixHash, sealOpts.mixHash)
+    assert.deepEqual(block.header.nonce, sealOpts.nonce)
+    assert.doesNotThrow(async () =>
+      (vm.blockchain as Blockchain).consensus!.validateDifficulty(block.header),
+    )
+  })
+
+  it('seal a PoA block', async () => {
+    // const common = new Common({ chain: Chain.Rinkeby, hardfork: Hardfork.Istanbul })
+    const consensusConfig = {
+      clique: {
+        period: 10,
+        epoch: 30000,
+      },
+    }
+    const defaultChainData: GethGenesis = {
+      config: {
+        chainId: 123456,
+        homesteadBlock: 0,
+        eip150Block: 0,
+        eip150Hash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+        eip155Block: 0,
+        eip158Block: 0,
+        byzantiumBlock: 0,
+        constantinopleBlock: 0,
+        petersburgBlock: 0,
+        istanbulBlock: 0,
+        berlinBlock: 0,
+        londonBlock: 0,
+        ...consensusConfig,
+      },
+      nonce: '0x0',
+      timestamp: '0x614b3731',
+      gasLimit: '0x47b760',
+      difficulty: '0x1',
+      mixHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      coinbase: '0x0000000000000000000000000000000000000000',
+      number: '0x0',
+      gasUsed: '0x0',
+      parentHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      baseFeePerGas: 7,
+      alloc: {},
+    }
+
+    const addr = SIGNER_A.address.toString().slice(2)
+
+    const extraData2 = `0x${'0'.repeat(64)}${addr}${'0'.repeat(130)}`
+    const chainData = {
+      ...defaultChainData,
+      extraData: extraData2,
+      alloc: { [addr]: { balance: '0x10000000000000000000' } },
+    }
+    const common = createCommonFromGethGenesis(chainData, {
+      chain: 'devnet',
+      hardfork: Hardfork.Istanbul,
+    })
+
+    // extraData: [vanity, activeSigner, seal]
+    const extraData = concatBytes(
+      new Uint8Array(32),
+      SIGNER_A.address.toBytes(),
+      new Uint8Array(65),
+    )
+    const cliqueSignerKey = SIGNER_A.privateKey
+    const genesisBlock = createSealedCliqueBlock(
+      { header: { gasLimit: 50000, extraData } },
+      cliqueSignerKey,
+      { common },
+    )
+    const blockchain = await createBlockchain({ genesisBlock, common })
+    const vm = await createVM({ common, blockchain })
+
+    // add balance for tx
+    await vm.stateManager.putAccount(SIGNER_A.address, createAccount({ balance: 100000 }))
+
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      headerData: { difficulty: 2, extraData: new Uint8Array(97) },
+      blockOpts: { cliqueSigner: cliqueSignerKey, freeze: false },
+    })
+
+    // Set up tx
+    const tx = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    await blockBuilder.addTransaction(tx)
+
+    const { block } = await blockBuilder.build()
+
+    assert.isTrue(
+      cliqueVerifySignature(block.header, [SIGNER_A.address]),
+      'should verify signature',
+    )
+    assert.deepEqual(
+      cliqueSigner(block.header),
+      SIGNER_A.address,
+      'should recover the correct signer address',
+    )
+  })
+
+  it('throws if block already built or reverted', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = createBlock({ header: { gasLimit: 50000 } }, { common })
+    const blockchain = await createBlockchain({ genesisBlock, common, validateConsensus: false })
+    const vm = await createVM({ common, blockchain })
+
+    await setBalance(vm, SIGNER_A.address)
+
+    let blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      blockOpts: { calcDifficultyFromHeader: genesisBlock.header },
+    })
+
+    const tx = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    await blockBuilder.addTransaction(tx)
+    await blockBuilder.build()
+
+    try {
+      await blockBuilder.revert()
+      assert.strictEqual(
+        blockBuilder.getStatus().status,
+        'reverted',
+        'block should be in reverted status',
+      )
+    } catch {
+      assert.fail('should not throw')
+    }
+
+    blockBuilder = await buildBlock(vm, { parentBlock: genesisBlock })
+
+    const tx2 = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1, nonce: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    await blockBuilder.addTransaction(tx2)
+    await blockBuilder.revert()
+
+    try {
+      await blockBuilder.revert()
+      assert.strictEqual(
+        blockBuilder.getStatus().status,
+        'reverted',
+        'block should be in reverted status',
+      )
+    } catch {
+      assert.fail('should not throw')
+    }
+  })
+
+  it('builds a block without any txs', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
+    const genesisBlock = createBlock({ header: { gasLimit: 50000 } }, { common })
+    const blockchain = await createBlockchain({ genesisBlock, common, validateConsensus: false })
+    const vm = await createVM({ common, blockchain })
+    const vmCopy = await vm.shallowCopy()
+
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      blockOpts: { calcDifficultyFromHeader: genesisBlock.header, freeze: false },
+    })
+
+    const { block } = await blockBuilder.build()
+
+    // block should successfully execute with VM.runBlock and have same outputs
+    const result = await runBlock(vmCopy, { block })
+    assert.strictEqual(result.gasUsed, block.header.gasUsed)
+    assert.deepEqual(result.receiptsRoot, block.header.receiptTrie)
+    assert.deepEqual(result.stateRoot, block.header.stateRoot)
+    assert.deepEqual(result.logsBloom, block.header.logsBloom)
+  })
+
+  it('builds a 1559 block with legacy and 1559 txs', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.London, eips: [1559] })
+    const genesisBlock = createBlock(
+      { header: { gasLimit: 50000, baseFeePerGas: 100 } },
+      { common },
+    )
+    const blockchain = await createBlockchain({ genesisBlock, common, validateConsensus: false })
+    const vm = await createVM({ common, blockchain })
+
+    await setBalance(vm, SIGNER_A.address)
+
+    const vmCopy = await vm.shallowCopy()
+
+    const blockBuilder = await buildBlock(vm, {
+      parentBlock: genesisBlock,
+      headerData: { coinbase: '0x96dc73c8b5969608c77375f085949744b5177660' },
+      blockOpts: { calcDifficultyFromHeader: genesisBlock.header, freeze: false },
+    })
+
+    // Set up underpriced txs to test error response
+    const tx1 = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    const tx2 = createFeeMarket1559Tx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, maxFeePerGas: 10 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    for (const tx of [tx1, tx2]) {
+      try {
+        await blockBuilder.addTransaction(tx)
+        assert.fail('addTransaction should reject underpriced tx')
+      } catch (e: unknown) {
+        assert.match((e as Error).message, /is less than the block's baseFeePerGas/)
+      }
+    }
+
+    // Set up correctly priced txs
+    const tx3 = createLegacyTx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, gasPrice: 101 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    const tx4 = createFeeMarket1559Tx(
+      { to: createZeroAddress(), value: 1000, gasLimit: 21000, maxFeePerGas: 101, nonce: 1 },
+      { common, freeze: false },
+    ).sign(SIGNER_A.privateKey)
+
+    for (const tx of [tx3, tx4]) {
+      await blockBuilder.addTransaction(tx)
+      assert.isTrue(true, 'should pass')
+    }
+
+    const { block } = await blockBuilder.build()
+    assert.strictEqual(
+      blockBuilder.transactionReceipts.length,
+      2,
+      'should have the correct number of tx receipts',
+    )
+
+    assert.strictEqual(
+      block.header.baseFeePerGas,
+      genesisBlock.header.calcNextBaseFee(),
+      "baseFeePerGas should equal parentHeader's calcNextBaseFee",
+    )
+
+    const result = await runBlock(vmCopy, { block })
+    assert.strictEqual(result.gasUsed, block.header.gasUsed)
+    assert.deepEqual(result.receiptsRoot, block.header.receiptTrie)
+    assert.deepEqual(result.stateRoot, block.header.stateRoot)
+    assert.deepEqual(result.logsBloom, block.header.logsBloom)
+  })
+})

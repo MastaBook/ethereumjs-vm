@@ -1,0 +1,224 @@
+import {
+  MapDB,
+  bytesToHex,
+  bytesToUtf8,
+  equalsBytes,
+  hexToBytes,
+  utf8ToBytes,
+} from '@ethereumjs/util'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { assert, beforeEach, describe, it } from 'vitest'
+
+import { MerklePatriciaTrie, ROOT_DB_KEY, createMPT } from '../../src/index.ts'
+
+describe('[MPT/Trie]: checkpoints', () => {
+  describe('[MPT/Trie]: after initial puts', () => {
+    let trie: MerklePatriciaTrie
+    let preRoot: string
+
+    beforeEach(async () => {
+      trie = new MerklePatriciaTrie()
+      await trie.put(utf8ToBytes('do'), utf8ToBytes('verb'))
+      await trie.put(utf8ToBytes('doge'), utf8ToBytes('coin'))
+      preRoot = bytesToHex(trie.root())
+    })
+
+    it('shallowCopy() reads values from the original trie', async () => {
+      const trieCopy = trie.shallowCopy()
+      assert.strictEqual(bytesToHex(trieCopy.root()), preRoot)
+      const res = await trieCopy.get(utf8ToBytes('do'))
+      assert.isTrue(equalsBytes(utf8ToBytes('verb'), res!))
+    })
+
+    it('checkpoint() marks the trie as checkpointed', () => {
+      trie.checkpoint()
+      assert.isTrue(trie.hasCheckpoints())
+    })
+  })
+
+  it('shallowCopy() deactivates cache when source trie uses cache', async () => {
+    const trie = new MerklePatriciaTrie({ cacheSize: 100 })
+    const trieCopy = trie.shallowCopy()
+    assert.strictEqual((trieCopy as any)._opts.cacheSize, 0)
+  })
+
+  describe('[MPT/Trie]: after checkpoint and cache puts', () => {
+    let trie: MerklePatriciaTrie
+    let postRoot: string
+
+    beforeEach(async () => {
+      trie = new MerklePatriciaTrie()
+      await trie.put(utf8ToBytes('do'), utf8ToBytes('verb'))
+      await trie.put(utf8ToBytes('doge'), utf8ToBytes('coin'))
+      trie.checkpoint()
+      await trie.put(utf8ToBytes('test'), utf8ToBytes('something'))
+      await trie.put(utf8ToBytes('love'), utf8ToBytes('emotion'))
+      postRoot = bytesToHex(trie.root())
+    })
+
+    it('shallowCopy() reads upstream and cache values after checkpoint', async () => {
+      const trieCopy = trie.shallowCopy()
+      assert.strictEqual(bytesToHex(trieCopy.root()), postRoot)
+      assert.strictEqual(trieCopy['_db'].checkpoints.length, 1)
+      assert.isTrue(trieCopy.hasCheckpoints())
+      const res = await trieCopy.get(utf8ToBytes('do'))
+      assert.isTrue(equalsBytes(utf8ToBytes('verb'), res!))
+      const res2 = await trieCopy.get(utf8ToBytes('love'))
+      assert.isTrue(equalsBytes(utf8ToBytes('emotion'), res2!))
+    })
+  })
+
+  it('shallowCopy() preserves custom key hashing function', async () => {
+    const trie = new MerklePatriciaTrie({
+      db: new MapDB(),
+      useKeyHashing: true,
+      useKeyHashingFunction: sha256,
+    })
+
+    await trie.put(utf8ToBytes('key1'), utf8ToBytes('value1'))
+    trie.checkpoint()
+    await trie.put(utf8ToBytes('key2'), utf8ToBytes('value2'))
+    const trieCopy = trie.shallowCopy()
+    const value = await trieCopy.get(utf8ToBytes('key1'))
+    assert.strictEqual(bytesToUtf8(value!), 'value1')
+  })
+
+  /*
+    In this educational example, it is shown how operations on a clone of a trie
+    can be copied into the original trie. This also includes pruning.
+    A practical use-case of this could be to take two clones of a trie
+    and apply different operations on it. Based on the outcome, pick one.
+    If this "checkpoint copy trick" (see test for this "trick") is not used,
+    one has to keep track of what key/values are changed and then re-apply these
+    on the trie again. However, by copying the checkpoint, one can immediately
+    update the original trie (have to manually copy the root after applying the checkpoint, too).
+    This test also implicitly checks that on copying a MerklePatriciaTrie, the checkpoints are deep-copied.
+    If it would not deep copy, then some checks in this test will fail.
+    See PR 2203 and 2236.
+  */
+  it('Checkpointing: nested checkpoints -> with pruning, verify that checkpoints are deep-copied', async () => {
+    const KEY = utf8ToBytes('last_block_height')
+    const KEY_ROOT = keccak_256(ROOT_DB_KEY)
+
+    // Initialize State
+    const CommittedState = await createMPT({
+      useKeyHashing: true,
+      useNodePruning: true,
+      useRootPersistence: true,
+    })
+
+    // Put some initial data
+    await CommittedState.put(KEY, utf8ToBytes('1'))
+
+    // Take a checkpoint to enable nested checkpoints
+    // From this point, CommittedState will not write on disk
+    CommittedState.checkpoint()
+
+    // Copy CommittedState
+    const MemoryState = CommittedState.shallowCopy()
+    MemoryState.checkpoint()
+
+    // Test changes on MemoryState
+    await MemoryState.put(KEY, utf8ToBytes('2'))
+    await MemoryState.commit()
+
+    // The CommittedState should not change (not the key/value pairs, not the root, and not the root in DB)
+    assert.strictEqual(bytesToUtf8((await CommittedState.get(KEY))!), '1')
+    assert.strictEqual(
+      bytesToHex((await CommittedState['_db'].get(KEY_ROOT))!),
+      '0x77ddd505d2a5b76a2a6ee34b827a0d35ca19f8d358bee3d74a84eab59794487c',
+    )
+    assert.strictEqual(
+      bytesToHex(CommittedState.root()),
+      '0x77ddd505d2a5b76a2a6ee34b827a0d35ca19f8d358bee3d74a84eab59794487c',
+    )
+
+    // From MemoryState, now take the final checkpoint
+    const finalCheckpoint = MemoryState['_db'].checkpoints[0]
+    // Insert this into CommittedState
+    CommittedState['_db'].checkpoints.push(finalCheckpoint)
+
+    // Now all operations done on MemoryState (including pruning) can be
+    // committed into CommittedState
+    await CommittedState.commit()
+    // Flush items to disk
+    await CommittedState.commit()
+    // Update the root (this information is not fed via the checkpoint, have to do this manually)
+    CommittedState.root(MemoryState.root())
+    // Setting the root does not automatically persist the root, so persist it
+    await CommittedState.persistRoot()
+
+    // Make sure CommittedState looks like we expect (2 keys, last_block_height=2 + __root__)
+    // I.e. the trie is pruned.
+    assert.deepEqual(
+      [...(CommittedState['_db'].db as any)._database.values()].map((value) => value),
+      [
+        hexToBytes('0xd7eba6ee0f011acb031b79554d57001c42fbfabb150eb9fdd3b6d434f7b791eb'),
+        hexToBytes('0xe3a1202418cf7414b1e6c2c8d92b4673eecdb4aac88f7f58623e3be903aefb2fd4655c32'),
+      ],
+    )
+    // Verify that the key is updated
+    assert.strictEqual(bytesToUtf8((await CommittedState.get(KEY))!), '2')
+  })
+})
+
+describe('[MPT/Trie]: checkpoints with DB failures', () => {
+  const setup = async () => {
+    const db = new MapDB<string, string | Uint8Array>()
+    const trie = await createMPT({ db })
+    await trie.put(utf8ToBytes('do'), utf8ToBytes('verb'))
+    trie.checkpoint()
+    return { db, trie, root: trie.root() }
+  }
+
+  it('reverts after a put fails to read from the DB', async () => {
+    const { db, trie, root } = await setup()
+    db.get = async () => {
+      throw new Error('read failed')
+    }
+
+    try {
+      await trie.put(utf8ToBytes('doge'), utf8ToBytes('coin'))
+      assert.fail('put should throw when DB read fails')
+    } catch (e: unknown) {
+      assert.match((e as Error).message, /read failed/)
+    }
+    await trie.revert()
+    assert.deepEqual(trie.root(), root)
+  })
+
+  it('reverts after a del fails to read from the DB', async () => {
+    const { db, trie, root } = await setup()
+    db.get = async () => {
+      throw new Error('read failed')
+    }
+
+    try {
+      await trie.del(utf8ToBytes('do'))
+      assert.fail('del should throw when DB read fails')
+    } catch (e: unknown) {
+      assert.match((e as Error).message, /read failed/)
+    }
+    await trie.revert()
+    assert.deepEqual(trie.root(), root)
+  })
+
+  it('reverts after a commit fails to flush to the DB', async () => {
+    const { db, trie, root } = await setup()
+    db.batch = async () => {
+      throw new Error('flush failed')
+    }
+    await trie.put(utf8ToBytes('doge'), utf8ToBytes('coin'))
+
+    try {
+      await trie.commit()
+      assert.fail('commit should throw when DB flush fails')
+    } catch (e: unknown) {
+      assert.match((e as Error).message, /flush failed/)
+    }
+    await trie.revert()
+    assert.deepEqual(trie.root(), root)
+    assert.isNull(await trie.get(utf8ToBytes('doge')))
+  })
+})

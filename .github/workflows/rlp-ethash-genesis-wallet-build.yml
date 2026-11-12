@@ -1,0 +1,72 @@
+name: RLP/Ethash/Genesis/Wallet Build
+on:
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+      run-coverage:
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+      run-coverage:
+        required: false
+        type: boolean
+        default: true
+
+env:
+  cwd: ${{github.workspace}}/packages/rlp
+  RUN_COVERAGE: ${{ inputs.run-coverage }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-static
+  cancel-in-progress: true
+
+jobs:
+  test-static:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      - name: Test rlp
+        run: |
+          if [ "$RUN_COVERAGE" = "false" ]; then
+            npm run test:node
+          else
+            npm run coverage
+          fi
+        working-directory: ${{ github.workspace }}/packages/rlp
+
+      - name: Test genesis
+        run: |
+          if [ "$RUN_COVERAGE" = "false" ]; then
+            npm run test:node
+          else
+            npm run coverage
+          fi
+        working-directory: ${{ github.workspace }}/packages/genesis
+
+      - name: Test beacon-light
+        run: |
+          if [ "$RUN_COVERAGE" = "false" ]; then
+            npm run test:node
+          else
+            npm run coverage
+          fi
+        working-directory: ${{ github.workspace }}/packages/beacon-light
+
+      - if: env.RUN_COVERAGE != 'false'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ env.cwd }}/coverage/lcov.info
+          flags: static

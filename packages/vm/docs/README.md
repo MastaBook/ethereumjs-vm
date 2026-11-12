@@ -1,20 +1,52 @@
-@ethereumjs/vm
+**@ethereumjs/vm**
+
+***
 
 # @ethereumjs/vm
 
-## Table of contents
+## Classes
 
-### Modules
+- [BlockBuilder](classes/BlockBuilder.md)
+- [Bloom](classes/Bloom.md)
+- [VM](classes/VM.md)
 
-- [buildBlock](modules/buildblock.md)
-- [exceptions](modules/exceptions.md)
-- [index](modules/index.md)
-- [runBlock](modules/runblock.md)
-- [runBlockchain](modules/runblockchain.md)
-- [runCall](modules/runcall.md)
-- [runCode](modules/runcode.md)
-- [runTx](modules/runtx.md)
-- [state](modules/state.md)
-- [state/interface](modules/state_interface.md)
-- [state/stateManager](modules/state_statemanager.md)
-- [types](modules/types.md)
+## Interfaces
+
+- [AfterBlockEvent](interfaces/AfterBlockEvent.md)
+- [AfterTxEvent](interfaces/AfterTxEvent.md)
+- [ApplyBlockResult](interfaces/ApplyBlockResult.md)
+- [BaseTxReceipt](interfaces/BaseTxReceipt.md)
+- [BuildBlockOpts](interfaces/BuildBlockOpts.md)
+- [BuilderOpts](interfaces/BuilderOpts.md)
+- [EIP4844BlobTxReceipt](interfaces/EIP4844BlobTxReceipt.md)
+- [PostByzantiumTxReceipt](interfaces/PostByzantiumTxReceipt.md)
+- [PreByzantiumTxReceipt](interfaces/PreByzantiumTxReceipt.md)
+- [RunBlockOpts](interfaces/RunBlockOpts.md)
+- [RunBlockResult](interfaces/RunBlockResult.md)
+- [RunTxOpts](interfaces/RunTxOpts.md)
+- [RunTxResult](interfaces/RunTxResult.md)
+- [SealBlockOpts](interfaces/SealBlockOpts.md)
+- [TxGasDimensionsEstimate](interfaces/TxGasDimensionsEstimate.md)
+- [VMOpts](interfaces/VMOpts.md)
+
+## Type Aliases
+
+- [BuildStatus](type-aliases/BuildStatus.md)
+- [EVMProfilerOpts](type-aliases/EVMProfilerOpts.md)
+- [TxReceipt](type-aliases/TxReceipt.md)
+- [VMEvent](type-aliases/VMEvent.md)
+- [VMProfilerOpts](type-aliases/VMProfilerOpts.md)
+
+## Variables
+
+- [BuildStatus](variables/BuildStatus.md)
+- [paramsVM](variables/paramsVM.md)
+
+## Functions
+
+- [buildBlock](functions/buildBlock.md)
+- [createVM](functions/createVM.md)
+- [encodeReceipt](functions/encodeReceipt.md)
+- [estimateTxGasDimensions](functions/estimateTxGasDimensions.md)
+- [runBlock](functions/runBlock.md)
+- [runTx](functions/runTx.md)

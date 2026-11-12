@@ -1,16 +1,13 @@
-import assert from 'assert'
-import { PeerInfo } from '../dpt'
-import { ENR } from './enr'
-import { debug as createDebugLogger } from 'debug'
+import * as dns from 'dns'
+import { EthereumJSErrorWithoutCode } from '@ethereumjs/util'
+import debugDefault from 'debug'
 
-let dns: any
-try {
-  dns = require('dns')
-} catch (e) {
-  dns = require('../browser/dns')
-}
+import { ENR } from './enr.ts'
 
-const debug = createDebugLogger('devp2p:dns:dns')
+import type { Common } from '@ethereumjs/common'
+import type { DNSOptions, PeerInfo } from '../types.ts'
+
+const debug = debugDefault('devp2p:dns:dns')
 
 type SearchContext = {
   domain: string
@@ -18,26 +15,30 @@ type SearchContext = {
   visits: { [key: string]: boolean }
 }
 
-export type DNSOptions = {
-  /**
-   * ipv4 or ipv6 address of server to pass to native dns.setServers()
-   * Sets the IP address of servers to be used when performing
-   * DNS resolution.
-   * @type {string}
-   */
-  dnsServerAddress?: string
-}
+/** EIP-1459 DNS discovery client that walks ENR trees and returns verified peer records. */
+export const SEEN_DNS_ADDRESS_CAP = 500
+export const SEEN_DNS_TTL_MS = 300_000
 
 export class DNS {
-  private _DNSTreeCache: { [key: string]: string }
-  private readonly _errorTolerance: number = 10
+  protected _DNSTreeCache: { [key: string]: string }
+  protected readonly _errorTolerance: number = 10
+  /** Dedupe ENR TCP endpoints across successive {@link getPeers} calls with a 60s expiry (WP-04f). */
+  protected _seenAddresses = new Map<string, number>()
+
+  protected _common?: Common
+
+  private DEBUG: boolean
 
   constructor(options: DNSOptions = {}) {
     this._DNSTreeCache = {}
 
-    if (options.dnsServerAddress) {
-      dns.setServers([options.dnsServerAddress])
+    if (typeof options.dnsServerAddress === 'string' && options.dnsServerAddress.length > 0) {
+      dns.promises.setServers([options.dnsServerAddress])
     }
+
+    this._common = options.common
+
+    this.DEBUG = globalThis.process?.env?.DEBUG?.includes('ethjs') ?? false
   }
 
   /**
@@ -47,7 +48,7 @@ export class DNS {
    * search exceeds `maxQuantity` plus the `errorTolerance` factor.
    *
    * @param {number}        maxQuantity  max number to get
-   * @param {string}        treeEntry enrtree string (See EIP-1459 for format)
+   * @param {string[]}        dnsNetworks enrTree strings (See EIP-1459 for format)
    * @return {PeerInfo}
    */
   async getPeers(maxQuantity: number, dnsNetworks: string[]): Promise<PeerInfo[]> {
@@ -56,8 +57,11 @@ export class DNS {
 
     const networkIndex = Math.floor(Math.random() * dnsNetworks.length)
     const { publicKey, domain } = ENR.parseTree(dnsNetworks[networkIndex])
+    if (publicKey === undefined || domain === undefined) {
+      throw EthereumJSErrorWithoutCode('Could not parse ENR tree entry')
+    }
 
-    while (peers.length < maxQuantity && totalSearches < maxQuantity + this._errorTolerance) {
+    while (peers.length < maxQuantity && totalSearches < maxQuantity * 3 + this._errorTolerance) {
       const context: SearchContext = {
         domain,
         publicKey,
@@ -66,9 +70,11 @@ export class DNS {
 
       const peer = await this._search(domain, context)
 
-      if (this._isNewPeer(peer, peers)) {
-        peers.push(peer as PeerInfo)
-        debug(`got new peer candidate from DNS address=${peer!.address}`)
+      if (this._isNewPeer(peer, peers) && this._rememberDnsPeerAddress(peer)) {
+        peers.push(peer)
+        if (this.DEBUG) {
+          debug(`got new peer candidate from DNS address=${peer.address}`)
+        }
       }
 
       totalSearches++
@@ -85,7 +91,16 @@ export class DNS {
    * @return {PeerInfo | null}
    */
   private async _search(subdomain: string, context: SearchContext): Promise<PeerInfo | null> {
-    const entry = await this._getTXTRecord(subdomain, context)
+    let entry: string
+    try {
+      entry = await this._getTXTRecord(subdomain, context)
+    } catch (error: unknown) {
+      if (this.DEBUG) {
+        const msg = error instanceof Error ? error.message : String(error)
+        debug(`DNS TXT lookup failed at ${subdomain}: ${msg}`)
+      }
+      return null
+    }
     context.visits[subdomain] = true
 
     let next: string
@@ -94,19 +109,21 @@ export class DNS {
     try {
       switch (this._getEntryType(entry)) {
         case ENR.ROOT_PREFIX:
-          next = ENR.parseAndVerifyRoot(entry, context.publicKey)
+          next = ENR.parseAndVerifyRoot(entry, context.publicKey, this._common)
           return await this._search(next, context)
         case ENR.BRANCH_PREFIX:
           branches = ENR.parseBranch(entry)
           next = this._selectRandomPath(branches, context)
           return await this._search(next, context)
         case ENR.RECORD_PREFIX:
-          return ENR.parseAndVerifyRecord(entry)
+          return ENR.parseAndVerifyRecord(entry, this._common)
         default:
           return null
       }
-    } catch (error) {
-      debug(`Errored searching DNS tree at subdomain ${subdomain}: ${error}`)
+    } catch (error: any) {
+      if (this.DEBUG) {
+        debug(`Errored searching DNS tree at subdomain ${subdomain}: ${error}`)
+      }
       return null
     }
   }
@@ -130,7 +147,7 @@ export class DNS {
    *
    * @param {string[]}      branches
    * @param {SearchContext} context
-   * @return {String}       subdomian
+   * @return {String}       subdomain
    */
   private _selectRandomPath(branches: string[], context: SearchContext): string {
     // Identify domains already visited in this traversal of the DNS tree.
@@ -143,7 +160,7 @@ export class DNS {
     }
     // If all possible paths are circular...
     if (Object.keys(circularRefs).length === branches.length) {
-      throw new Error('Unresolvable circular path detected')
+      throw EthereumJSErrorWithoutCode('Unresolvable circular path detected')
     }
 
     // Randomly select a viable path
@@ -174,9 +191,9 @@ export class DNS {
 
     const response = await dns.promises.resolve(location, 'TXT')
 
-    assert(response.length, 'Received empty result array while fetching TXT record')
-    assert(response[0].length, 'Received empty TXT record')
-
+    if (response.length === 0)
+      throw EthereumJSErrorWithoutCode('Received empty result array while fetching TXT record')
+    if (response[0].length === 0) throw EthereumJSErrorWithoutCode('Received empty TXT record')
     // Branch entries can be an array of strings of comma delimited subdomains, with
     // some subdomain strings split across the array elements
     // (e.g btw end of arr[0] and beginning of arr[1])
@@ -190,13 +207,14 @@ export class DNS {
    * Returns false if candidate peer already exists in the
    * current collection of peers.
    * Returns true otherwise.
+   * Also acts as a typeguard for peer
    *
    * @param  {PeerInfo}   peer
    * @param  {PeerInfo[]} peers
    * @return {boolean}
    */
-  private _isNewPeer(peer: PeerInfo | null, peers: PeerInfo[]): boolean {
-    if (!peer || !peer!.address) return false
+  private _isNewPeer(peer: PeerInfo | null, peers: PeerInfo[]): peer is PeerInfo {
+    if (peer === null || peer.address === undefined) return false
 
     for (const existingPeer of peers) {
       if (peer.address === existingPeer.address) {
@@ -204,6 +222,19 @@ export class DNS {
       }
     }
 
+    return true
+  }
+
+  private _rememberDnsPeerAddress(peer: PeerInfo): boolean {
+    if (peer.address === undefined || peer.tcpPort === undefined) return true
+    const key = `${peer.address}:${peer.tcpPort}`
+    const now = Date.now()
+    const seenAt = this._seenAddresses.get(key)
+    if (seenAt !== undefined && now - seenAt < SEEN_DNS_TTL_MS) return false
+    this._seenAddresses.set(key, now)
+    if (this._seenAddresses.size >= SEEN_DNS_ADDRESS_CAP) {
+      this._seenAddresses.clear()
+    }
     return true
   }
 

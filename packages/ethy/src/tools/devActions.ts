@@ -1,0 +1,89 @@
+import { getCommandAvailability } from '../domains/commandAvailability.ts'
+import { findBucketByPrefix } from '../spine/buckets.ts'
+import { deriveCapabilities } from '../spine/createSpine.ts'
+import type { EthySpine, WidgetSpec } from '../spine/types.ts'
+import { renderCommandUnavailableWidget } from '../tui/components/CommandUnavailableUIComponent.ts'
+
+export function pauseSnapSync(spine: EthySpine): WidgetSpec {
+  const avail = getCommandAvailability('/pause', spine)
+  if (avail.status === 'locked') {
+    return renderCommandUnavailableWidget('/pause', avail, spine)
+  }
+  spine.snapPaused = true
+  deriveCapabilities(spine)
+  return {
+    kind: 'key_value',
+    title: 'Snap sync paused',
+    entries: [{ key: 'Status', value: 'paused' }],
+  }
+}
+
+export function resumeSnapSync(spine: EthySpine): WidgetSpec {
+  const avail = getCommandAvailability('/resume', spine)
+  if (avail.status === 'locked') {
+    return renderCommandUnavailableWidget('/resume', avail, spine)
+  }
+  spine.snapPaused = false
+  deriveCapabilities(spine)
+  return {
+    kind: 'key_value',
+    title: 'Snap sync resumed',
+    entries: [{ key: 'Status', value: 'running' }],
+  }
+}
+
+export function dropPeer(
+  spine: EthySpine,
+  peerId: string,
+  disconnectPeer?: (id: string) => void,
+): WidgetSpec {
+  const avail = getCommandAvailability('/drop', spine)
+  if (avail.status === 'locked') {
+    return renderCommandUnavailableWidget('/drop', avail, spine)
+  }
+  const id = peerId.trim().toLowerCase()
+  if (!spine.peers.has(id)) {
+    return {
+      kind: 'key_value',
+      title: 'Drop peer',
+      entries: [{ key: 'Error', value: `Unknown peer "${peerId}"` }],
+    }
+  }
+  disconnectPeer?.(id)
+  spine.peers.delete(id)
+  deriveCapabilities(spine)
+  return {
+    kind: 'key_value',
+    title: 'Drop peer',
+    entries: [{ key: 'Dropped', value: id }],
+    assistantComment: `${spine.peers.size} peers remain.`,
+  }
+}
+
+export function reassignBucket(spine: EthySpine, bucketArg: string): WidgetSpec {
+  const avail = getCommandAvailability('/reassign', spine)
+  if (avail.status === 'locked') {
+    return renderCommandUnavailableWidget('/reassign', avail, spine)
+  }
+  const bucket = findBucketByPrefix(spine.snapBuckets, bucketArg.trim())
+  if (bucket === undefined) {
+    return {
+      kind: 'key_value',
+      title: 'Reassign bucket',
+      entries: [{ key: 'Error', value: `Invalid bucket "${bucketArg}" (use 0x0..0xf)` }],
+    }
+  }
+  bucket.status = 'pending'
+  bucket.lastStallReason = undefined
+  bucket.assignedPeerId = undefined
+  deriveCapabilities(spine)
+  return {
+    kind: 'key_value',
+    title: 'Reassign bucket',
+    entries: [
+      { key: 'Bucket', value: bucket.prefix },
+      { key: 'Status', value: 'pending' },
+    ],
+    assistantComment: 'Bucket queued for a new peer assignment.',
+  }
+}

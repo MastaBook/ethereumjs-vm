@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "./packages/**/*.ts",
+    "./packages/**/*.spec.ts",
+    "./packages/**/*.js",
+    "./packages/**/*.cjs",
+    "./packages/**/*.cts",
+    "./packages/**/*.mjs",
+    "./packages/**/*.mts"
+  ],
+  "exclude": ["package.json"],
+  "compilerOptions": {
+    "noEmit": true
+  }
+}

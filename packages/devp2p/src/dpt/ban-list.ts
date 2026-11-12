@@ -1,26 +1,33 @@
-import LRUCache from 'lru-cache'
-import { debug as createDebugLogger } from 'debug'
-import { KBucket } from './kbucket'
-import { formatLogId } from '../util'
-import { PeerInfo } from './dpt'
+import debugDefault from 'debug'
+import { LRUCache } from 'lru-cache'
 
-const debug = createDebugLogger('devp2p:dpt:ban-list')
-const verbose = createDebugLogger('verbose').enabled
+import { formatLogId } from '../util.ts'
+
+import { KBucket } from './kbucket.ts'
+
+import type { PeerInfo } from '../types.ts'
+
+const debug = debugDefault('devp2p:dpt:ban-list')
+const verbose = debugDefault('verbose').enabled
 
 export class BanList {
-  private lru: LRUCache<string, boolean>
+  private _lru: LRUCache<string, boolean>
+  private DEBUG: boolean
   constructor() {
-    this.lru = new LRUCache({ max: 30000 }) // 10k should be enough (each peer obj can has 3 keys)
+    this._lru = new LRUCache({ max: 10000 })
+    this.DEBUG = globalThis.process?.env?.DEBUG?.includes('ethjs') ?? false
   }
 
-  add(obj: string | Buffer | PeerInfo, maxAge?: number) {
+  add(obj: string | Uint8Array | PeerInfo, maxAge?: number) {
     for (const key of KBucket.getKeys(obj)) {
-      this.lru.set(key, true, maxAge)
-      debug(`Added peer ${formatLogId(key, verbose)}, size: ${this.lru.length}`)
+      this._lru.set(key, true, { ttl: maxAge })
+      if (this.DEBUG) {
+        debug(`Added peer ${formatLogId(key, verbose)}, size: ${this._lru.size}`)
+      }
     }
   }
 
-  has(obj: string | Buffer | PeerInfo): boolean {
-    return KBucket.getKeys(obj).some((key: string) => Boolean(this.lru.get(key)))
+  has(obj: string | Uint8Array | PeerInfo): boolean {
+    return KBucket.getKeys(obj).some((key: string) => Boolean(this._lru.get(key)))
   }
 }

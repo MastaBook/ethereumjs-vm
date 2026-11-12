@@ -1,124 +1,101 @@
-import tape from 'tape'
-import {
-  BN,
-  toType,
-  TypeOutput,
-  intToBuffer,
-  bufferToHex,
-  intToHex,
-  bnToHex,
-  toBuffer,
-} from '../src'
+import { assert, describe, it } from 'vitest'
 
-tape('toType', function (t) {
-  t.test('from Number', function (st) {
+import {
+  TypeOutput,
+  bigIntToBytes,
+  bigIntToHex,
+  bytesToBigInt,
+  bytesToHex,
+  hexToBytes,
+  intToBytes,
+  intToHex,
+  toType,
+} from '../src/index.ts'
+
+describe('[Util]: toType', () => {
+  it('from null and undefined', () => {
+    assert.strictEqual(toType(null, TypeOutput.Number), null)
+    assert.strictEqual(toType(null, TypeOutput.BigInt), null)
+    assert.strictEqual(toType(null, TypeOutput.Uint8Array), null)
+    assert.strictEqual(toType(null, TypeOutput.PrefixedHexString), null)
+    assert.strictEqual(toType(undefined, TypeOutput.Number), undefined)
+    assert.strictEqual(toType(undefined, TypeOutput.BigInt), undefined)
+    assert.strictEqual(toType(undefined, TypeOutput.Uint8Array), undefined)
+    assert.strictEqual(toType(undefined, TypeOutput.PrefixedHexString), undefined)
+  })
+  it('from Number', () => {
     const num = 1000
-    st.test('should convert to Number', function (st) {
-      const result = toType(num, TypeOutput.Number)
-      st.strictEqual(result, num)
-      st.end()
-    })
-    st.test('should convert to BN', function (st) {
-      const result = toType(num, TypeOutput.BN)
-      st.ok(result.eq(new BN(num)))
-      st.end()
-    })
-    st.test('should convert to Buffer', function (st) {
-      const result = toType(num, TypeOutput.Buffer)
-      st.ok(result.equals(intToBuffer(num)))
-      st.end()
-    })
-    st.test('should convert to PrefixedHexString', function (st) {
-      const result = toType(num, TypeOutput.PrefixedHexString)
-      st.strictEqual(result, bufferToHex(new BN(num).toArrayLike(Buffer)))
-      st.end()
-    })
-    st.test('should throw an error if greater than MAX_SAFE_INTEGER', function (st) {
-      st.throws(() => {
-        const num = Number.MAX_SAFE_INTEGER + 1
-        toType(num, TypeOutput.BN)
-      }, /^Error: The provided number is greater than MAX_SAFE_INTEGER \(please use an alternative input type\)$/)
-      st.end()
-    })
+    let result
+    result = toType(num, TypeOutput.Number)
+    assert.strictEqual(result, num)
+
+    result = toType(num, TypeOutput.BigInt)
+    assert.strictEqual(result, BigInt(num))
+
+    result = toType(num, TypeOutput.Uint8Array)
+    assert.deepEqual(result, intToBytes(num))
+
+    result = toType(num, TypeOutput.PrefixedHexString)
+    assert.strictEqual(result, bytesToHex(bigIntToBytes(BigInt(num))))
+
+    assert.throws(() => {
+      const num = Number.MAX_SAFE_INTEGER + 1
+      toType(num, TypeOutput.BigInt)
+    }, /^The provided number is greater than MAX_SAFE_INTEGER \(please use an alternative input type\)$/)
   })
-  t.test('from BN', function (st) {
-    const num = new BN(1000)
-    st.test('should convert to Number', function (st) {
-      const result = toType(num, TypeOutput.Number)
-      st.strictEqual(result, num.toNumber())
-      st.end()
-    })
-    st.test('should convert to BN', function (st) {
-      const result = toType(num, TypeOutput.BN)
-      st.ok(result.eq(num))
-      st.end()
-    })
-    st.test('should convert to Buffer', function (st) {
-      const result = toType(num, TypeOutput.Buffer)
-      st.ok(result.equals(num.toArrayLike(Buffer)))
-      st.end()
-    })
-    st.test('should convert to PrefixedHexString', function (st) {
-      const result = toType(num, TypeOutput.PrefixedHexString)
-      st.strictEqual(result, bufferToHex(num.toArrayLike(Buffer)))
-      st.end()
-    })
-    st.test(
-      'should throw an error if converting to Number and greater than MAX_SAFE_INTEGER',
-      function (st) {
-        const num = new BN(Number.MAX_SAFE_INTEGER).addn(1)
-        st.throws(() => {
-          toType(num, TypeOutput.Number)
-        }, /^Error: The provided number is greater than MAX_SAFE_INTEGER \(please use an alternative output type\)$/)
-        st.end()
-      }
-    )
+
+  it('from BigInt', () => {
+    const num = BigInt(1000)
+    let result
+    result = toType(num, TypeOutput.Number)
+    assert.strictEqual(result, Number(num))
+
+    result = toType(num, TypeOutput.BigInt)
+    assert.strictEqual(result, num)
+
+    result = toType(num, TypeOutput.Uint8Array)
+    assert.deepEqual(result, bigIntToBytes(num))
+
+    result = toType(num, TypeOutput.PrefixedHexString)
+    assert.strictEqual(result, bytesToHex(bigIntToBytes(num)))
+
+    const num2 = BigInt(Number.MAX_SAFE_INTEGER) + BigInt(1)
+    assert.throws(() => {
+      toType(num2, TypeOutput.Number)
+    }, /^The provided number is greater than MAX_SAFE_INTEGER \(please use an alternative output type\)$/)
   })
-  t.test('from Buffer', function (st) {
-    const num = intToBuffer(1000)
-    st.test('should convert to Number', function (st) {
-      const result = toType(num, TypeOutput.Number)
-      st.ok(intToBuffer(result).equals(num))
-      st.end()
-    })
-    st.test('should convert to BN', function (st) {
-      const result = toType(num, TypeOutput.BN)
-      st.ok(result.eq(new BN(num)))
-      st.end()
-    })
-    st.test('should convert to Buffer', function (st) {
-      const result = toType(num, TypeOutput.Buffer)
-      st.ok(result.equals(num))
-      st.end()
-    })
-    st.test('should convert to PrefixedHexString', function (st) {
-      const result = toType(num, TypeOutput.PrefixedHexString)
-      st.strictEqual(result, bufferToHex(num))
-      st.end()
-    })
+  it('from Uint8Array', () => {
+    const num = intToBytes(1000)
+    let result
+
+    result = toType(num, TypeOutput.Number)
+    assert.deepEqual(intToBytes(result), num)
+
+    result = toType(num, TypeOutput.BigInt)
+    assert.strictEqual(result, bytesToBigInt(num))
+
+    result = toType(num, TypeOutput.Uint8Array)
+    assert.deepEqual(result, num)
+
+    result = toType(num, TypeOutput.PrefixedHexString)
+    assert.strictEqual(result, bytesToHex(num))
   })
-  t.test('from HexPrefixedString', function (st) {
+  it('from PrefixedHexString', () => {
     const num = intToHex(1000)
-    st.test('should convert to Number', function (st) {
-      const result = toType(num, TypeOutput.Number)
-      st.strictEqual(intToHex(result), num)
-      st.end()
-    })
-    st.test('should convert to BN', function (st) {
-      const result = toType(num, TypeOutput.BN)
-      st.strictEqual(bnToHex(result), num)
-      st.end()
-    })
-    st.test('should convert to Buffer', function (st) {
-      const result = toType(num, TypeOutput.Buffer)
-      st.ok(result.equals(toBuffer(num)))
-      st.end()
-    })
-    st.test('should throw an error if is not 0x-prefixed', function (st) {
-      st.throws(() => {
-        toType('1', TypeOutput.Number)
-      }, /^Error: A string must be provided with a 0x-prefix, given: 1$/)
-      st.end()
-    })
+    let result
+
+    result = toType(num, TypeOutput.Number)
+    assert.strictEqual(intToHex(result), num)
+
+    result = toType(num, TypeOutput.BigInt)
+    assert.strictEqual(bigIntToHex(result), num)
+
+    result = toType(num, TypeOutput.Uint8Array)
+    assert.deepEqual(result, hexToBytes(num))
+
+    assert.throws(() => {
+      //@ts-expect-error -- Testing invalid input
+      toType('1', TypeOutput.Number)
+    }, /^A string must be provided with a 0x-prefix, given: 1$/)
   })
 })

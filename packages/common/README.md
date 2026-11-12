@@ -1,4 +1,4 @@
-# @ethereumjs/common
+# @ethereumjs/common `v10`
 
 [![NPM Package][common-npm-badge]][common-npm-link]
 [![GitHub Issues][common-issues-badge]][common-issues-link]
@@ -7,252 +7,448 @@
 [![Discord][discord-badge]][discord-link]
 
 | Resources common to all EthereumJS implementations. |
-| --- |
+| --------------------------------------------------- |
 
-Note: this `README` reflects the state of the library from `v2.0.0` onwards. See `README` from the [standalone repository](https://github.com/ethereumjs/ethereumjs-common) for an introduction on the last preceeding release.
+`Common` holds the **chain configuration**, **active hardfork**, **EIP set**, and **protocol parameters** shared across the EthereumJS libraries. Instantiate one `Common` per network context and pass it to `tx`, `block`, `evm`, `vm`, and related packages.
 
-# INSTALL
+Runnable examples live in [`examples/`](./examples/).
 
-`npm install @ethereumjs/common`
+## Table of Contents
 
-# USAGE
+- [Installation](#installation)
+- [Getting Started](#getting-started)
+- [Chain Presets](#chain-presets)
+- [Hardfork Selection](#hardfork-selection)
+- [Parameter Access](#parameter-access)
+- [Blob Gas Schedule](#blob-gas-schedule)
+- [EIP Activation](#eip-activation)
+- [Events](#events)
+- [Custom and Private Chains](#custom-and-private-chains)
+- [Custom Cryptography (WASM / KZG)](#custom-cryptography-wasm--kzg)
+- [Browser](#browser)
+- [API](#api)
+- [EthereumJS](#ethereumjs)
+- [License](#license)
 
-All parameters can be accessed through the `Common` class which can be required through the
-main package and instantiated either with just the `chain` (e.g. 'mainnet') or the `chain`
-together with a specific `hardfork` provided.
+## Installation
 
-If no hardfork is provided the common is initialized with the default hardfork.
-
-Current `DEFAULT_HARDFORK`: `istanbul`
-
-Here are some simple usage examples:
-
-```typescript
-import Common from '@ethereumjs/common'
-
-// Instantiate with the chain (and the default hardfork)
-const c = new Common({ chain: 'ropsten' })
-c.param('gasPrices', 'ecAddGas') // 500
-
-// Chain and hardfork provided
-c = new Common({ chain: 'ropsten', hardfork: 'byzantium' })
-c.param('pow', 'minerReward') // 3000000000000000000
-
-// Instantiate with an EIP activated
-const c = new Common({ chain: 'mainnet', eips: [2537] })
-
-// Access genesis data for Ropsten network
-c.genesis().hash // 0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d
-
-// Get bootstrap nodes for chain/network
-c.bootstrapNodes() // Array with current nodes
+```shell
+npm install @ethereumjs/common
 ```
 
-If the initializing library only supports a certain range of `hardforks` you can use the `supportedHardforks` option to restrict hardfork access on the `Common` instance:
+## Getting Started
 
-```typescript
-const c = new Common({
-  chain: 'ropsten',
-  supportedHardforks: ['byzantium', 'constantinople', 'petersburg'],
+### import / require
+
+import (ESM, TypeScript):
+
+```ts
+import { Chain, Common, Hardfork, Mainnet } from '@ethereumjs/common'
+```
+
+require (CommonJS, Node.js):
+
+```ts
+const { Common, Hardfork, Mainnet } = require('@ethereumjs/common')
+```
+
+### Instantiate `Common`
+
+Pick a built-in chain preset (`Mainnet`, `Sepolia`, …) and optionally pin a hardfork. When omitted, the chain's `defaultHardfork` is used (`Hardfork.Prague` on Mainnet today).
+
+```ts
+// ./examples/instantiation.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+const withHardfork = new Common({ chain: Mainnet, hardfork: Hardfork.Prague })
+const withDefault = new Common({ chain: Mainnet })
+
+console.log(`Explicit hardfork: ${withHardfork.hardfork()}`)
+console.log(
+  `Default hardfork: ${withDefault.hardfork()} (DEFAULT_HARDFORK=${withDefault.DEFAULT_HARDFORK})`,
+)
+```
+
+## Chain Presets
+
+Built-in presets: `Mainnet`, `Sepolia`, `Holesky`, `Hoodi`. Each exposes `chainId()`, `genesis()`, `hardforks()`, `bootstrapNodes()`, `dnsNetworks()`, and consensus metadata.
+
+```ts
+// ./examples/testnetChains.ts
+
+import { Common, Holesky, Hoodi, Mainnet, Sepolia } from '@ethereumjs/common'
+
+for (const chain of [Mainnet, Sepolia, Holesky, Hoodi]) {
+  const common = new Common({ chain })
+  console.log(
+    `${common.chainName()}: chainId=${common.chainId()} hardfork=${common.hardfork()} bootstrapNodes=${common.bootstrapNodes().length}`,
+  )
+}
+```
+
+Chain fields are defined in [`chains.ts`](./src/chains.ts) and the `ChainConfig` type in [`types.ts`](./src/types.ts).
+
+## Hardfork Selection
+
+### Pin at construction
+
+Set `hardfork` in the constructor when you know the fork up front (tests, single-fork tooling).
+
+### Resolve from block headers
+
+For block replay, syncing, or VM runs, use `getHardforkBy()` / `setHardforkBy()`. Pre-merge forks use **block number**; post-merge forks need **timestamp** (and typically block number as well).
+
+```ts
+// ./examples/hardforkByBlock.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+const common = new Common({ chain: Mainnet })
+
+// Pre-merge: block number alone determines the active hardfork
+console.log(`HF at block 12_965_000 (London): ${common.getHardforkBy({ blockNumber: 12_965_000n })}`)
+common.setHardforkBy({ blockNumber: 12_965_000n })
+console.log(`After setHardforkBy: ${common.hardfork()}`)
+
+// Post-merge: pass timestamp (and block number) for timestamp-based forks
+common.setHardforkBy({ blockNumber: 19_000_000n, timestamp: 1_710_338_135n })
+console.log(`HF at Cancun timestamp: ${common.hardfork()}`)
+
+common.setHardforkBy({ blockNumber: 19_000_000n, timestamp: 1_746_612_311n })
+console.log(`HF at Prague timestamp: ${common.hardfork()}`)
+console.log(`Prague active on block 19M: ${common.hardforkIsActiveOnBlock(Hardfork.Prague, 19_000_000n)}`)
+```
+
+This mirrors what `@ethereumjs/vm` does when executing a block.
+
+### Supported hardforks
+
+Past and upcoming hardforks include `chainstart` through `osaka`, plus in-development `amsterdam`. `Hardfork.Prague` is the current Mainnet default; `Hardfork.Amsterdam` is experimental — see the [canonical Amsterdam overview](https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/vm#amsterdam-hardfork-experimental) in `@ethereumjs/vm` for release ↔ spec tracking.
+
+## Parameter Access
+
+Hardfork and EIP parameters (gas costs, limits, rewards, …) are read with `param()`, `paramByHardfork()`, and `paramByBlock()`. Parameter definitions live in [`hardforks.ts`](./src/hardforks.ts) and [`eips.ts`](./src/eips.ts).
+
+```ts
+// ./examples/paramAccess.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+// Hardfork-local params (defined on the BPO hardfork schedule)
+const bpo = new Common({ chain: Mainnet, hardfork: Hardfork.Bpo1 })
+console.log(`BPO target blob count: ${bpo.param('target')}`)
+
+// Downstream packages ship default EIP param sets; inject manually on standalone Common
+const common = new Common({ chain: Mainnet, hardfork: Hardfork.London })
+common.updateParams({ 1559: { initialBaseFee: 1_000_000_000 } })
+console.log(`London initialBaseFee: ${common.param('initialBaseFee')}`)
+
+// paramByBlock() picks the hardfork active at a block (then reads the param)
+console.log(`HF at block 12_965_000: ${common.getHardforkBy({ blockNumber: 12_965_000n })}`)
+console.log(
+  `initialBaseFee at block 12_965_000: ${common.paramByBlock('initialBaseFee', 12_965_000n)}`,
+)
+```
+
+Downstream packages may supply extra param dictionaries (e.g. `@ethereumjs/tx` `paramsTx` for tx-specific EIP params). Pass them via the constructor `params` option when needed.
+
+## Blob Gas Schedule
+
+EIP-4844 blob gas limits and EIP-7892 BPO schedule changes are exposed through `getBlobGasSchedule()`. BPO hardforks (`Bpo1`, …) carry `target` / `max` on the hardfork definition; earlier forks need EIP-4844 params (merged automatically when using `@ethereumjs/vm` / `@ethereumjs/evm`, or via `updateParams()` on standalone `Common`).
+
+```ts
+// ./examples/blobGasSchedule.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+const blob4844Params = {
+  targetBlobGasPerBlock: 393216,
+  maxBlobGasPerBlock: 786432,
+  blobGasPriceUpdateFraction: 3338477,
+  blobGasPerBlob: 131072,
+}
+
+// Pre-BPO: EIP-4844 param names
+const cancun = new Common({ chain: Mainnet, hardfork: Hardfork.Cancun })
+cancun.updateParams({ 4844: blob4844Params })
+const cancunSchedule = cancun.getBlobGasSchedule()
+console.log(
+  `Cancun: target=${cancunSchedule.targetBlobGasPerBlock} max=${cancunSchedule.maxBlobGasPerBlock}`,
+)
+
+// BPO hardforks: target/max counts are on the HF; multiply by blobGasPerBlob
+for (const hardfork of [Hardfork.Bpo1, Hardfork.Bpo2]) {
+  const common = new Common({ chain: Mainnet, hardfork })
+  common.updateParams({ 4844: { blobGasPerBlob: blob4844Params.blobGasPerBlob } })
+  const schedule = common.getBlobGasSchedule()
+  console.log(
+    `${hardfork}: target=${schedule.targetBlobGasPerBlock} max=${schedule.maxBlobGasPerBlock} updateFraction=${schedule.blobGasPriceUpdateFraction}`,
+  )
+}
+```
+
+## EIP Activation
+
+EIPs activate through the hardfork schedule and/or the constructor `eips` array. Query with `isActivatedEIP()`.
+
+```ts
+// ./examples/activateEIPs.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+// Default-on via hardfork schedule (Prague ships EIP-7702)
+const prague = new Common({ chain: Mainnet, hardfork: Hardfork.Prague })
+console.log(`EIP-7702 on Prague: ${prague.isActivatedEIP(7702)}`)
+
+// Opt-in before schedule: activate on an earlier hardfork via constructor `eips`
+const early7702 = new Common({ chain: Mainnet, hardfork: Hardfork.Cancun, eips: [7702] })
+console.log(`EIP-7702 forced on Cancun: ${early7702.isActivatedEIP(7702)}`)
+
+// Experimental Amsterdam fork (in development) — full bundle via Hardfork.Amsterdam
+const amsterdam = new Common({ chain: Mainnet, hardfork: Hardfork.Amsterdam })
+console.log(`EIP-7928 BAL on Amsterdam: ${amsterdam.isActivatedEIP(7928)}`)
+console.log(`EIP-7708 transfer logs: ${amsterdam.isActivatedEIP(7708)}`)
+console.log(`EIP-8037 two-dimensional gas: ${amsterdam.isActivatedEIP(8037)}`)
+console.log(`EIP-7843 SLOTNUM / slotNumber: ${amsterdam.isActivatedEIP(7843)}`)
+```
+
+### Supported EIPs
+
+The following EIPs are currently supported (sorted by EIP number):
+
+- [EIP-1153](https://eips.ethereum.org/EIPS/eip-1153) - Transient storage opcodes (Cancun)
+- [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) - Fee market change for ETH 1.0 chain
+- [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537) - Precompile for BLS12-381 curve operations (Prague)
+- [EIP-2565](https://eips.ethereum.org/EIPS/eip-2565) - ModExp gas cost
+- [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) - Transaction Types
+- [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929) - Gas cost increases for state access opcodes
+- [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930) - Optional access list tx type
+- [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935) - Serve historical block hashes in state (Prague)
+- [EIP-3198](https://eips.ethereum.org/EIPS/eip-3198) - Base fee opcode
+- [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529) - Reduction in refunds
+- [EIP-3541](https://eips.ethereum.org/EIPS/eip-3541) - Reject new contracts starting with the 0xEF byte
+- [EIP-3554](https://eips.ethereum.org/EIPS/eip-3554) - Difficulty Bomb Delay to December 2021 (only PoW networks)
+- [EIP-3607](https://eips.ethereum.org/EIPS/eip-3607) - Reject transactions from senders with deployed code
+- [EIP-3651](https://eips.ethereum.org/EIPS/eip-3651) - Warm COINBASE (Shanghai)
+- [EIP-3675](https://eips.ethereum.org/EIPS/eip-3675) - Upgrade consensus to Proof-of-Stake
+- [EIP-3855](https://eips.ethereum.org/EIPS/eip-3855) - PUSH0 opcode (Shanghai)
+- [EIP-3860](https://eips.ethereum.org/EIPS/eip-3860) - Limit and meter initcode (Shanghai)
+- [EIP-4345](https://eips.ethereum.org/EIPS/eip-4345) - Difficulty Bomb Delay to June 2022
+- [EIP-4399](https://eips.ethereum.org/EIPS/eip-4399) - Supplant DIFFICULTY opcode with PREVRANDAO (Merge)
+- [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788) - Beacon block root in the EVM (Cancun)
+- [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844) - Shard Blob Transactions (Cancun)
+- [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895) - Beacon chain push withdrawals as operations (Shanghai)
+- [EIP-5133](https://eips.ethereum.org/EIPS/eip-5133) - Delaying Difficulty Bomb to mid-September 2022 (Gray Glacier)
+- [EIP-5656](https://eips.ethereum.org/EIPS/eip-5656) - MCOPY - Memory copying instruction (Cancun)
+- [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110) - Supply validator deposits on chain (Prague)
+- [EIP-6780](https://eips.ethereum.org/EIPS/eip-6780) - SELFDESTRUCT only in same transaction (Cancun)
+- [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002) - Execution layer triggerable exits (Prague)
+- [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) - Increase the MAX_EFFECTIVE_BALANCE (Prague)
+- [EIP-7516](https://eips.ethereum.org/EIPS/eip-7516) - BLOBBASEFEE opcode (Cancun)
+- [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594) - PeerDAS blob transactions (Osaka)
+- [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623) - Increase calldata cost (Prague)
+- [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685) - General purpose execution layer requests (Prague)
+- [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691) - Blob throughput increase (Prague)
+- [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) - Set EOA account code (Prague)
+- [EIP-7708](https://eips.ethereum.org/EIPS/eip-7708) - ETH transfers emit a log (Amsterdam, experimental)
+- [EIP-7709](https://eips.ethereum.org/EIPS/eip-7709) - Read BLOCKHASH from storage and update cost (Verkle, experimental)
+- [EIP-7778](https://eips.ethereum.org/EIPS/eip-7778) - Block-level gas accounting without refunds (Amsterdam, experimental)
+- [EIP-7823](https://eips.ethereum.org/EIPS/eip-7823) - Set upper bounds for MODEXP (Osaka)
+- [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825) - Transaction gas limit cap (Osaka)
+- [EIP-7843](https://eips.ethereum.org/EIPS/eip-7843) - SLOTNUM opcode (Amsterdam, experimental)
+- [EIP-7864](https://eips.ethereum.org/EIPS/eip-7864) - Ethereum state using a unified binary tree (experimental)
+- [EIP-7883](https://eips.ethereum.org/EIPS/eip-7883) - ModExp gas cost increase (Osaka)
+- [EIP-7918](https://eips.ethereum.org/EIPS/eip-7918) - Blob base fee bounded by execution cost (Osaka)
+- [EIP-7928](https://eips.ethereum.org/EIPS/eip-7928) - Block Level Access Lists (Amsterdam, experimental)
+- [EIP-7934](https://eips.ethereum.org/EIPS/eip-7934) - RLP Execution Block Size Limit (Osaka)
+- [EIP-7939](https://eips.ethereum.org/EIPS/eip-7939) - Count leading zeros (CLZ) opcode (Osaka)
+- [EIP-7951](https://eips.ethereum.org/EIPS/eip-7951) - Precompile for secp256r1 curve support (Osaka)
+- [EIP-7954](https://eips.ethereum.org/EIPS/eip-7954) - Increase max contract and initcode size (Amsterdam, experimental)
+- [EIP-7976](https://eips.ethereum.org/EIPS/eip-7976) - Increase calldata floor cost (Amsterdam, experimental)
+- [EIP-7981](https://eips.ethereum.org/EIPS/eip-7981) - Access list data pricing (Amsterdam, experimental)
+- [EIP-7997](https://eips.ethereum.org/EIPS/eip-7997) - Deterministic CREATE2 factory predeploy (Amsterdam, experimental)
+- [EIP-8024](https://eips.ethereum.org/EIPS/eip-8024) - DUPN, SWAPN and EXCHANGE instructions (Amsterdam, experimental)
+- [EIP-8037](https://eips.ethereum.org/EIPS/eip-8037) - State creation gas cost increase (Amsterdam, experimental)
+- [EIP-8038](https://eips.ethereum.org/EIPS/eip-8038) - State access gas cost increase (Amsterdam, experimental)
+- [EIP-8246](https://eips.ethereum.org/EIPS/eip-8246) - SELFDESTRUCT no burn (Amsterdam, experimental)
+- [EIP-8282](https://eips.ethereum.org/EIPS/eip-8282) - Builder execution requests (Amsterdam, experimental)
+
+Annotations:
+
+- Hardfork labels (e.g. `(Prague)`) indicate default activation on that fork
+- `(Amsterdam, experimental)` and `(experimental)` mark unstable specs; behaviour may change on patch releases
+- Release ↔ spec tracking: [canonical Amsterdam overview](https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/vm#amsterdam-hardfork-experimental) in `@ethereumjs/vm`
+
+## Events
+
+`common.events` is an [EventEmitter3](https://github.com/primus/eventemitter3) instance:
+
+| Event             | Description                                                |
+| ----------------- | ---------------------------------------------------------- |
+| `hardforkChanged` | Emitted when `setHardfork()` changes the active hardfork   |
+
+```ts
+// ./examples/hardforkEvents.ts
+
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+
+const common = new Common({ chain: Mainnet, hardfork: Hardfork.London })
+
+common.events.on('hardforkChanged', (hardfork) => {
+  console.log(`hardforkChanged event: ${hardfork}`)
 })
+
+common.setHardfork(Hardfork.Prague)
 ```
 
-This will e.g. throw an error when a param is requested for an unsupported hardfork and
-like this prevents unpredicted behaviour.
+## Custom and Private Chains
 
-# API
+`createCustomCommon()` adjusts a base preset or supplies a full `ChainConfig`. Use it for L2 chain IDs, devnets, and PoA networks.
 
-See the API documentation for a full list of functions for accessing specific chain and
-depending hardfork parameters. There are also additional helper functions like
-`paramByBlock (topic, name, blockNumber)` or `hardforkIsActiveOnBlock (hardfork, blockNumber)`
-to ease `blockNumber` based access to parameters.
+### Chain ID override (L2 pattern)
 
-- [API Docs](./docs/README.md)
+```ts
+// ./examples/customChainId.ts
 
-# EVENTS
+import { Mainnet, createCustomCommon } from '@ethereumjs/common'
 
-The `Common` class is implemented as an `EventEmitter` and is emitting the following events
-on which you can react within your code:
+// Keep Mainnet params but override chainId — typical for L2 / private networks
+const l2Common = createCustomCommon({ chainId: 42161 }, Mainnet)
 
-| Event | Description |
-| - | - |
-| `hardforkChanged` | Emitted when a hardfork change occurs in the Common object |
-
-# SETUP
-
-## Chains
-
-The `chain` can be set in the constructor like this:
-
-```typescript
-const c = new Common({ chain: 'ropsten' })
+console.log(`chainId=${l2Common.chainId()} name=${l2Common.chainName()}`)
+console.log(`Hardfork schedule inherited (${l2Common.hardforks().length} entries)`)
 ```
 
-Supported chains:
+See the [`@ethereumjs/tx` README](https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/tx) for signing with a custom `Common`.
 
-- `mainnet`
-- `ropsten`
-- `rinkeby`
-- `kovan`
-- `goerli`
-- `yolov3`
-- Private/custom chain parameters
+### Full custom `ChainConfig`
 
-The following chain-specific parameters are provided:
+```ts
+// ./examples/customChain.ts
 
-- `name`
-- `chainId`
-- `networkId`
-- `consensusType` (e.g. `pow` or `poa`)
-- `consensusAlgorithm` (e.g. `ethash` or `clique`)
-- `consensusConfig` (depends on `consensusAlgorithm`, e.g. `period` and `epoch` for `clique`)
-- `genesis` block header values
-- `hardforks` block numbers
-- `bootstrapNodes` list
-- `dnsNetworks` list ([EIP-1459](https://eips.ethereum.org/EIPS/eip-1459)-compliant list of DNS networks for peer discovery)
+import { Hardfork, Mainnet, createCustomCommon } from '@ethereumjs/common'
+import { customChainConfig } from '@ethereumjs/testdata'
 
-To get an overview of the different parameters have a look at one of the chain-specifc
-files like `mainnet.json` in the `chains` directory, or to the `Chain` type in [./src/types.ts](./src/types.ts).
+const common = createCustomCommon(customChainConfig, Mainnet)
 
-### Working with private/custom chains
+console.log(`Chain ${common.chainName()} (chainId=${common.chainId()})`)
+console.log(`Hardfork at block 4: ${common.getHardforkBy({ blockNumber: 4n })}`)
+console.log(`Bootstrap nodes: ${common.bootstrapNodes().length}`)
 
-There are two distinct APIs available for setting up custom(ized) chains.
-
-#### Activate with a single custom Chain setup
-
-If you want to initialize a `Common` instance with a single custom chain which is then directly activated
-you can pass a dictionary - conforming to the parameter format described above - with your custom chain 
-values to the constructor using the `chain` parameter or the `setChain()` method, here is some example:
-
-```typescript
-import myCustomChain from './[PATH]/myCustomChain.json'
-const common = new Common({ chain: myCustomChain })
+common.setHardfork(Hardfork.Byzantium)
+console.log(`Active hardfork on custom chain: ${common.hardfork()}`)
 ```
 
-If you just want to change certain parameters on a chain configuration it can also be convenient to use
-the `Common.forCustomChain()` method. With this method you can base your custom chain configuration with
-a standard one (so using all the values from `baseChain` as the default values) and then just provide the
-parameters you want to override:
+### PoA / Clique consensus metadata
 
-```typescript
-const customChainParams = { name: 'custom', chainId: 123, networkId: 678 }
-const customChainCommon = Common.forCustomChain('mainnet', customChainParams, 'byzantium')
+```ts
+// ./examples/consensusConfig.ts
+
+import { Common, Hardfork } from '@ethereumjs/common'
+import { testnetMergeChainConfig } from '@ethereumjs/testdata'
+
+const common = new Common({ chain: testnetMergeChainConfig, hardfork: Hardfork.London })
+
+console.log(`consensusType: ${common.consensusType()}`)
+console.log(`consensusAlgorithm: ${common.consensusAlgorithm()}`)
+
+const clique = common.consensusConfig()
+console.log(`clique period=${clique.period}s epoch=${clique.epoch} blocks`)
 ```
 
-#### Initialize using customChains Array
+### From Geth genesis JSON
 
-A second way for custom chain initialization is to use the `customChains` constructor option. This
-option comes with more flexibility and allows for an arbitrary number of custom chains to be initialized on
-a common instance in addition to the already supported ones. It also allows for an activation-independent 
-initialization, so you can add your chains by adding to the `customChains` array and either directly 
-use the `chain` option to activate one of the custom chains passed or activate a build in chain 
-(e.g. `mainnet`) and switch to other chains - including the custom ones - by using `Common.setChain()`.
+For devnets and testnets, derive `Common` from a Geth `genesis.json` (chain config + alloc):
 
-```typescript
-import myCustomChain1 from './[PATH]/myCustomChain1.json'
-import myCustomChain2 from './[PATH]/myCustomChain2.json'
-// Add two custom chains, initial mainnet activation
-const common1 = new Common({ chain: 'mainnet', customChains: [ myCustomChain1, myCustomChain2 ] })
-// Somewhat later down the road...
-common1.setChain('customChain1')
-// Add two custom chains, activate customChain1
-const common1 = new Common({ chain: 'customChain1', customChains: [ myCustomChain1, myCustomChain2 ] })
+```ts
+// ./examples/fromGethGenesis.ts
+
+import { createCommonFromGethGenesis } from '@ethereumjs/common'
+import { postMergeGethGenesis } from '@ethereumjs/testdata'
+import { hexToBytes } from '@ethereumjs/util'
+
+const genesisHash = hexToBytes('0x3b8fb240d288781d4aac94d3fd16809ee413bc99294a085798a589dae51ddd4a')
+const common = createCommonFromGethGenesis(postMergeGethGenesis, {
+  chain: 'customChain',
+  genesisHash,
+})
+// Defer genesisHash when unknown at init time — set later after computing the genesis block hash
+common.setForkHashes(genesisHash)
+
+console.log(`Hardfork is ${common.hardfork()} chainId=${common.chainId()}`)
+console.log(`Paris fork hash: ${common.forkHash('paris')}`)
 ```
 
-## Hardforks
+## Custom Cryptography (WASM / KZG)
 
-The `hardfork` can be set in constructor like this:
+By default, EthereumJS uses audited pure-JS crypto from `ethereum-cryptography`. For performance or blob/KZG support, pass replacements on `customCrypto` ([`types.ts`](./src/types.ts)).
 
-```typescript
-const c = new Common({ chain: 'ropsten', hardfork: 'byzantium' })
+Note: WASM backends add supply-chain and audit surface. Evaluate before enabling in production.
+
+### keccak256 (WASM example)
+
+```ts
+// ./examples/customCrypto.ts
+
+import { createBlock } from '@ethereumjs/block'
+import { Common, Mainnet } from '@ethereumjs/common'
+import { keccak256, waitReady } from '@polkadot/wasm-crypto'
+
+const main = async () => {
+  await waitReady()
+
+  const common = new Common({ chain: Mainnet, customCrypto: { keccak256 } })
+  const block = createBlock({}, { common })
+
+  // Downstream calls on objects sharing this `common` use the custom hash
+  console.log(block.hash())
+}
+
+void main()
 ```
 
-### Active Hardforks
+### KZG for EIP-4844 / PeerDAS
 
-There are currently parameter changes by the following past and future hardfork by the
-library supported:
+KZG is required for blob transactions (EIP-4844) and cell proofs (EIP-7594). Wire any library implementing the [`KZG` interface](./src/types.ts); the example below uses `micro-eth-signer`:
 
-- `chainstart`
-- `homestead`
-- `dao`
-- `tangerineWhistle`
-- `spuriousDragon`
-- `byzantium`
-- `constantinople`
-- `petersburg` (aka `constantinopleFix`, apply together with `constantinople`)
-- `istanbul` (`DEFAULT_HARDFORK` (`v2.0.0` release series))
-- `muirGlacier`
-- `berlin` (since `v2.2.0`)
+```ts
+// ./examples/initKZG.ts
 
-### Future Hardforks
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+import { trustedSetup } from '@paulmillr/trusted-setups/fast-peerdas.js'
+import { KZG as microEthKZG } from 'micro-eth-signer/kzg.js'
 
-The `london` hardfork targeted for summer 2021 is currently not yet supported by this library.
+const main = async () => {
+  const kzg = new microEthKZG(trustedSetup)
+  const common = new Common({
+    chain: Mainnet,
+    hardfork: Hardfork.Cancun,
+    customCrypto: { kzg },
+  })
+  console.log(common.customCrypto.kzg !== undefined)
+}
 
-### Parameter Access
-
-For hardfork-specific parameter access with the `param()` and `paramByBlock()` functions
-you can use the following `topics`:
-
-- `gasConfig`
-- `gasPrices`
-- `vm`
-- `pow`
-
-See one of the hardfork files like `byzantium.json` in the `hardforks` directory
-for an overview. For consistency, the chain start (`chainstart`) is considered an own
-hardfork.
-
-The hardfork-specific json files only contain the deltas from `chainstart` and
-shouldn't be accessed directly until you have a specific reason for it.
-
-## EIPs
-
-Starting with the `v2.0.0` release of the library, EIPs are now native citizens within the library
-and can be activated like this:
-
-```typescript
-const c = new Common({ chain: 'mainnet', eips: [2537] })
+void main()
 ```
 
-The following EIPs are currently supported:
+## Browser
 
-- [EIP-2315](https://eips.ethereum.org/EIPS/eip-2315): Simple subroutines for the EVM
-- [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537): BLS precompiles
-- [EIP-2565](https://eips.ethereum.org/EIPS/eip-2565): ModExp gas cost
-- [EIP-2718](https://eips.ethereum.org/EIPS/eip-2565): Transaction Types
-- [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929): gas cost increases for state access opcodes
-- [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930): Optional accesss list tx type
+Hybrid ESM/CJS builds ship with v10; libraries are pure JS by default (no hard-wired WASM). See [`examples/browser.html`](./examples/browser.html) for a local dev-server setup.
 
-## Bootstrap Nodes
+## API
 
-You can use `common.bootstrapNodes()` function to get nodes for a specific chain/network.
+Generated TypeDoc: [Documentation](./docs/README.md)
 
-## Genesis States
+Helper methods include `paramByBlock()`, `hardforkIsActiveOnBlock()`, `forkHash()`, `setForkHashes()`, `copy()`, and `updateParams()` for advanced overrides.
 
-Network-specific genesis files are located in the `genesisStates` folder.
+Hybrid CJS/ESM builds: ESM `import` resolves to `dist/esm/`; Node `require` resolves to `dist/cjs/`.
 
-Due to the large file sizes genesis states are not directly included in the `index.js` file
-but have to be accessed directly, e.g.:
+## EthereumJS
 
-```javascript
-const mainnetGenesisState = require('@ethereumjs/common/dist/genesisStates/mainnet')
-```
+The `EthereumJS` GitHub organization and its repositories are managed by members of the former Ethereum Foundation JavaScript team and the broader Ethereum community. See [developer docs](../../DEVELOPER.md) and [code of conduct](../../CODE_OF_CONDUCT.md).
 
-Or by accessing dynamically:
-
-```javascript
-const genesisStates = require('@ethereumjs/common/dist/genesisStates')
-const mainnetGenesisState = genesisStates.genesisStateByName('mainnet')
-const mainnetGenesisState = genesisStates.genesisStateById(1) // alternative via network Id
-```
-
-# EthereumJS
-
-See our organizational [documentation](https://ethereumjs.readthedocs.io) for an introduction to `EthereumJS` as well as information on current standards and best practices.
-
-If you want to join for work or do improvements on the libraries have a look at our [contribution guidelines](https://ethereumjs.readthedocs.io/en/latest/contributing.html).
-
-# LICENSE
+## License
 
 [MIT](https://opensource.org/licenses/MIT)
 
@@ -262,7 +458,7 @@ If you want to join for work or do improvements on the libraries have a look at 
 [common-npm-link]: https://www.npmjs.com/package/@ethereumjs/common
 [common-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20common?label=issues
 [common-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+common"
-[common-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Common%20Test/badge.svg
-[common-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Common+Test%22
+[common-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Common/badge.svg
+[common-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Common%22
 [common-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=common
 [common-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/common

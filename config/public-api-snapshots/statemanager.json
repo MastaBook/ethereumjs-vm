@@ -1,0 +1,29 @@
+{
+  "package": "statemanager",
+  "exports": [
+    "AccountCache",
+    "CODEHASH_PREFIX",
+    "CacheType",
+    "Caches",
+    "CodeCache",
+    "FlatStateManager",
+    "MerkleStateManager",
+    "OriginalStorageCache",
+    "RPCBlockChain",
+    "RPCStateManager",
+    "SNAP_BINARY_ACCOUNT_SLAB_RECORD_SIZE",
+    "SimpleStateManager",
+    "StatefulBinaryTreeStateManager",
+    "StorageCache",
+    "addMerkleStateProofData",
+    "addMerkleStateStorageProof",
+    "consumeBAL",
+    "consumeBALBatch",
+    "createFlatStateManager",
+    "fromMerkleStateProof",
+    "getMerkleStateProof",
+    "getRPCStateProof",
+    "mergeBALs",
+    "verifyMerkleStateProof"
+  ]
+}

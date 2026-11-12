@@ -1,0 +1,194 @@
+import { bytesToHex, equalsBytes } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
+
+import { createBlockchain } from '../src/index.ts'
+
+import { createTestDB, generateBlockchain, generateConsecutiveBlock } from './util.ts'
+
+import type { Block } from '@ethereumjs/block'
+
+describe('[Blockchain/Iterator]: iterator', () => {
+  it('iterates through 24 blocks without reorg', async () => {
+    const { blockchain, blocks, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    let i = 0
+    let reorged = 0
+    const iterated = await blockchain.iterator('test', (block: Block, reorg: boolean) => {
+      if (reorg) reorged++
+      if (equalsBytes(block.hash(), blocks[i + 1].hash()) === true) {
+        i++
+      }
+    })
+    assert.strictEqual(iterated, 24)
+    assert.strictEqual(i, 24)
+    assert.strictEqual(reorged, 0)
+  })
+
+  it('iterates through 24 blocks with reorg', async () => {
+    const { blockchain, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    let reorged = 0
+    const reorgedBlocks: Block[] = []
+    let servedReorged = 0
+
+    const iterated = await blockchain.iterator(
+      'test',
+      async (block: Block, reorg: boolean) => {
+        if (reorg) reorged++
+        if (reorged === 0) {
+          if (block.header.number === BigInt(10)) {
+            // let rewrite the chain from this block onwards to cause a reorg, but first
+            // we need to get the parent of this block to build a new chain onwards
+            let reorgParent = await blockchain.getBlock(4)
+            // Generate and add blocks from block 5 till block num 25 to reorg the chain
+            for (let j = 5; j < 26; j++) {
+              const reorgedBlock = generateConsecutiveBlock(reorgParent, 1, BigInt(8000001))
+              reorgedBlocks.push(reorgedBlock)
+              reorgParent = reorgedBlock
+            }
+            // we can do putBlocks even though it also acquire lock because we started this
+            // with releaseLockOnCallback=true, so in this callback there are no pending locks
+            await blockchain.putBlocks(reorgedBlocks)
+          }
+        } else {
+          if (equalsBytes(block.hash(), reorgedBlocks[Number(block.header.number) - 5].hash())) {
+            servedReorged++
+          }
+        }
+      },
+      undefined,
+      true,
+    )
+    assert.strictEqual(reorged, 1, 'should have reorged once')
+    assert.strictEqual(
+      servedReorged,
+      reorgedBlocks.length,
+      'should have served all 21 reorged blocks with head resetting',
+    )
+    assert.strictEqual(iterated, 31, 'should have iterated 10 + 21 blocks in total')
+  })
+
+  it('iterates through maxBlocks blocks if maxBlocks parameter is provided', async () => {
+    const { blockchain, blocks, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    let i = 0
+    const iterated = await blockchain.iterator(
+      'test',
+      (block: Block) => {
+        if (equalsBytes(block.hash(), blocks[i + 1].hash())) {
+          i++
+        }
+      },
+      5,
+    )
+    assert.strictEqual(iterated, 5)
+    assert.strictEqual(i, 5)
+  })
+
+  it('iterates through 0 blocks in case 0 maxBlocks parameter is provided', async () => {
+    const { blockchain, blocks, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    let i = 0
+    const iterated = await blockchain
+      .iterator(
+        'test',
+        (block: Block) => {
+          if (equalsBytes(block.hash(), blocks[i + 1].hash())) {
+            i++
+          }
+        },
+        0,
+      )
+      .catch(() => {
+        assert.fail('Promise cannot throw when running 0 blocks')
+      })
+    assert.strictEqual(iterated, 0)
+    assert.strictEqual(i, 0)
+  })
+
+  it('throws on a negative maxBlocks parameter in iterator', async () => {
+    const { blockchain, blocks, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    let i = 0
+    await blockchain
+      .iterator(
+        'test',
+        (block: Block) => {
+          if (equalsBytes(block.hash(), blocks[i + 1].hash())) {
+            i++
+          }
+        },
+        -1,
+      )
+      .catch(() => {})
+    // Note: if st.end() is not called (Promise did not throw), then this test fails, as it does not end.
+  })
+
+  it('setIteratorHead method', async () => {
+    const { blockchain, blocks, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+
+    const headBlockIndex = 5
+
+    const headHash = blocks[headBlockIndex].hash()
+    await blockchain.setIteratorHead('myHead', headHash)
+    const currentHeadBlock = await blockchain.getIteratorHead('myHead')
+
+    assert.deepEqual(headHash, currentHeadBlock.hash(), 'head hash equals the provided head hash')
+
+    let i = 0
+    // check that iterator starts from this head block
+    await blockchain.iterator(
+      'myHead',
+      (block: Block) => {
+        if (equalsBytes(block.hash(), blocks[headBlockIndex + 1].hash())) {
+          i++
+        }
+      },
+      5,
+    )
+
+    assert.strictEqual(i, 1)
+  })
+
+  it('catches iterator func error', async () => {
+    const { blockchain, error } = await generateBlockchain(25)
+    assert.strictEqual(error, null, 'no error')
+    try {
+      await blockchain.iterator('error', () => {
+        throw new Error('iterator func error')
+      })
+    } catch (error: any) {
+      assert.strictEqual(error?.message, 'iterator func error', 'should return correct error')
+    }
+  })
+
+  it('does not call iterator function in an empty blockchain', async () => {
+    const blockchain = await createBlockchain({
+      validateBlocks: true,
+      validateConsensus: false,
+    })
+
+    const numIterated = await blockchain.iterator('test', () => {
+      assert.fail('should not call iterator function')
+    })
+    assert.strictEqual(numIterated, 0, 'should finish iterating')
+  })
+
+  it('get heads', async () => {
+    const [db, genesis] = await createTestDB()
+    const blockchain = await createBlockchain({ db, genesisBlock: genesis })
+    const head = await blockchain.getIteratorHead()
+
+    if (typeof genesis !== 'undefined') {
+      assert.deepEqual(head.hash(), genesis.hash(), 'should get head')
+      assert.strictEqual(
+        bytesToHex((blockchain as any)._heads['head0']),
+        '0xabcd',
+        'should get state root heads',
+      )
+    } else {
+      assert.fail()
+    }
+  })
+})

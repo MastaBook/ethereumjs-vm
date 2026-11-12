@@ -1,0 +1,49 @@
+name: Packages examples
+on:
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+      workspaces:
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+      workspaces:
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-examples
+  cancel-in-progress: true
+
+jobs:
+  test-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      - name: Run examples
+        env:
+          WORKSPACES: ${{ inputs.workspaces }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          args=(--workspaces)
+          if [ -n "$WORKSPACES" ]; then
+            args=()
+            IFS=',' read -ra WS <<< "$WORKSPACES"
+            for w in "${WS[@]}"; do
+              w="${w// /}"
+              [ -n "$w" ] && args+=(--workspace="$w")
+            done
+          fi
+          npm run examples --if-present "${args[@]}"

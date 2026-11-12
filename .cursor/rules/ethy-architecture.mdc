@@ -1,0 +1,112 @@
+---
+description: Core architectural invariants for Ethy (@ethereumjs/ethy) — Spine, Headless Core, 4-Zone TUI, CI abstractions, and Amsterdam Snap/BAL sync
+globs: packages/ethy/**
+alwaysApply: false
+---
+
+# Ethy Architecture Invariants
+
+Ethy (`@ethereumjs/ethy`) is an **Execution-Free State & Intelligence Node** for Ethereum, starting with Amsterdam (`snap/1` flat-state sync without trie healing → `eth/71` EIP-7928 Block-Level Access List diffs) and a zero-log interactive TUI + AI microscope.
+
+## 1. Strict Separation: Headless Core, Worker-Threaded P2P & Zero-Log TUI
+
+- **Dedicated Worker-Thread P2P (`@ethereumjs/devp2p` via `WP-00`):**
+  - `DPT` (UDP discovery), `DNS`, and `RLPx` (TCP ECIES/Snappy/framing) run **100% inside a dedicated Node.js `worker_threads` Worker** (`createThreadedNetwork` in `@ethereumjs/devp2p`).
+  - The main thread never handles raw UDP discovery storms (`secp256k1` sign/recover), failed TCP handshakes, or O(N²) socket buffer concatenations. Subprotocol payloads (`eth`, `snap`) cross the worker boundary via zero-copy transferable `ArrayBuffer`s alongside coalesced peer/diagnostic telemetry snapshots.
+- **`EthyCore` & `EthySpine` (`src/core/`, `src/spine/`):**
+  - Must remain **100% terminal-agnostic** (no `process.stdout`, no ANSI codes, no `readline`).
+  - All subsystem telemetry (peers, 16 hex snap buckets `0x0..0xf`, current slot, capability states, and the bounded `diagnosticRingBuffer`) lives in the typed `EthySpine` store.
+  - No `console.log` or `console.error` spam during node operation. Protocol anomalies, peer drops, and range-proof failures are pushed into `spine.diagnosticRingBuffer` so the UI stays clean while the LLM/developer inspector has full X-ray visibility.
+  - This separation guarantees that `EthyCore` can also run in headless mode (`createEthyNode({ headless: true })`) as a live-state simulation backend for MCP servers (such as *Feel Your Protocol*).
+
+## 2. Pure 4-Band TUI & 3-Box Domain-Lens Cockpit
+
+- **Pure layout rendering (`src/tui/`):**
+  - `renderFrame(spine, view, width, height): string[]` is a pure, synchronous function of state and terminal dimensions. Details: [`packages/ethy/.cursor/rules/ethy-tui.mdc`](../../packages/ethy/.cursor/rules/ethy-tui.mdc).
+  - The screen is organized into 4 vertical bands:
+    1. **Band 1 — Minimal Top Header:** `Ethy v… | NETWORK` on the left; `Block N` then `Slot N` (when both known) just left of title-case capability pills (`Economy`, `State`, `P2P`), then a full-bleed `─` rule. No bracketed sub-labels in the top bar.
+    2. **Band 2 — 3-Box Cockpit Row (8 visible rows per box, rounded `╭─╮` boxes):**
+       - **Left Box (`Node Pulse`):** Always-anchored overview (Phase, Pivot/Head block, 16-bucket progress bar, throughput summary).
+       - **Middle Box (`Economy`):** Four-row live economic telemetry from `spine.economy` (`economyCockpitPairs`).
+       - **Right Box (`<Mark> <Domain> Metrics`):** Key stats for the selected `activeDomain`.
+    3. **Band 3 — Lower fill band (`renderLowerArea`):** Left **2/3** **Interaction View** (domain help, slash tools, NL widgets, optional `DebugPageUIComponent`); right **1/3** full-height **`AI`** box (`view.aiOverviewSections`, ≤600 chars, `AiPulseNarrator` when `--llm-url`). `viewHistory` (max 12): slash entries refresh live; AI entries are snapshots. **`Ctrl+D`** toggles main ↔ debug when `debugPage` is present.
+    4. **Band 4 — Domain-Lens Sticky Prompt:** `● ethy > ` where the leading mark reflects `activeDomain` (`state` / `economy` / `p2p`). Empty-draft **`Tab`** toggles unified `/help`; **`←`/`→`** walks interaction history; `/p` + `Enter` or natural language runs via `IntentEngine`.
+- **LLMs never draw raw ASCII boxes:**
+  - Tools return typed data + a `WidgetSpec`. The TypeScript TUI renderer computes column widths, truncation, and box borders deterministically.
+- **Stable fixed layout (no horizontal jump):**
+  - Each frame line is exactly `cols` visible columns. `Slot N` keeps a fixed gap before the capability pills, those pills stay anchored, and box/table columns use stable weights so values can change without reflowing the chrome.
+
+## 3. Bidirectional State Awareness (`<ethy_state>` & Tool Gating)
+
+- Every prompt routed to an LLM is prefixed with a compact `<ethy_state>` telemetry header containing `slot`, `slot_delta` since the previous query, current `phase`, and per-capability readiness.
+- **Dynamic Tool Gating:** Only expose tools whose capability pill is currently ready (`●`) or partially ready (`◐`). Never expose locked (`○`) tools to small local models.
+- **Zero-Boredom from Second 0:** Deterministic slash/keyword commands (`/peers`, `/buckets`, `/diag`, `/account`, `/help`) and the rotating onboarding prompt carousel work immediately at startup, even before any local LLM finishes loading or downloading.
+
+## 4. CI-First Abstractions (Zero Network, Zero LLM Download, Zero External DB in CI)
+
+Every external I/O boundary must sit behind a lightweight TypeScript interface with an in-memory/synthetic implementation for unit test CI:
+
+1. **`IntentEngine` (`src/ai/`):** Swaps between `DeterministicIntentEngine` (slash commands + keyword/fixture router for CI and fallback) and local LLM adapters.
+2. **`StateStore` / `FlatStateManager` (`@ethereumjs/statemanager`):** `FlatStateManager` (`packages/statemanager/src/flatStateManager.ts`) provides a zero-dep, hash-keyed (`keccak256(address)`), Copy-on-Write `StateManagerInterface` for `snap/1` batch ingestion, `consumeBAL`, EVM sandbox overlays, and unit test CI (can be backed by persistent disk storage later).
+3. **`SnapTransport` / `PeerSource` (`src/sync/`):** Swaps between live `@ethereumjs/devp2p` peers and `SyntheticSnapPeer` (which generates a deterministic mini-trie via `@ethereumjs/mpt` and serves real RLP `AccountRange` + Merkle edge proofs in <50ms).
+
+## 5. Amsterdam Sync, P2P "Good Citizen" & Wire Encoding Invariants
+
+- **Zero-Config CLI:** `npx @ethereumjs/ethy` (or `ethy sepolia`) starts immediately with sensible defaults. Network configs resolve dynamically from `@ethereumjs/common` (`Sepolia` default during Amsterdam testing; all `common` chains supported).
+- **Canonical RLP Scalar Zero (`intToUnpaddedBytes` / `bigIntToUnpaddedBytes` from `@ethereumjs/util`, NEVER `intToBytes(0)` / `bigIntToBytes(0n)`):**
+  - In `@ethereumjs/util`, `intToBytes(0)` and `bigIntToBytes(0n)` return `Uint8Array([0])` (`0x00`), which `@ethereumjs/rlp` encodes as a 1-byte string `0x00`.
+  - Go-Ethereum (`rlp/decode.go`) and Reth strictly reject `0x00` for integer/quantity fields (`uint64` / `big.Int`) with `rlp: non-canonical integer (leading zero bytes)` and immediately disconnect with `SUBPROTOCOL_ERROR`!
+  - Always use **`intToUnpaddedBytes(n)`** and **`bigIntToUnpaddedBytes(n)`** from `@ethereumjs/util` (which return `new Uint8Array(0)` → `0x80` for `0` / `0n`) for every RLP scalar integer/quantity in `devp2p` and `ethy` (`HELLO` port, `eth/69` `earliestBlock`/`latestBlock`, `GET_BLOCK_HEADERS` `skip`/`reverse`/`startBlock`, `BLOCK_RANGE_UPDATE`, `snap/1` `reqId` and `responseBytes`).
+- **Post-Merge BlockHeader Hardfork Resolution (`{ blockNumber, timestamp }`):**
+  - When decoding live RLP block headers with `@ethereumjs/block`, always extract **both** `blockNumber` (`fields[8]`) and `timestamp` (`fields[11]`) and call `common.setHardforkBy({ blockNumber, timestamp })`. Calling `setHardforkBy({ blockNumber })` alone resets post-Merge chains to `paris` and fails validation on post-Shanghai header fields.
+- **Even-Length Hex Normalization at Wire Boundaries:**
+  - Before calling `hexToBytes` on user/config/wire quantity hex strings (such as `latestBlock: '0x1912a62'`), parse via `BigInt(hex)` + `bigIntToUnpaddedBytes` (or `padToEven`) so `hexToBytes` never throws inside a protocol handler.
+- **Structured Live P2P Observability & Surgical Probe (`DiscoveryMetrics`, `p2p:probe`, `NoticeBoard`):**
+  - Never debug live P2P via blind 60-second full-node guesswork. Use the 4-stage surgical probe (`packages/devp2p/scripts/p2p-probe.ts`: Stage 1 DNS ENR + EIP-868 `eth` fork check → Stage 2 single-peer RLPx + `STATUS` hold → Stage 3 single-peer `GET_BLOCK_HEADERS` + `GET_ACCOUNT_RANGE` proof check → Stage 4 funnel soak) alongside `WorkerDiscoverySnapshot` counters.
+- **Direct DNS-to-RLPx Pipeline & EIP-868 (`eth` ENR) Chain Filtering:**
+  - `ENR.parseAndVerifyRecord` must extract `id: pk2id(obj.secp256k1)` and EIP-868 `ethForkId` (`[[forkHash, nextFork]]`).
+  - Verified DNS ENR peers already carry `{ id, address, tcpPort }` and must be dialed on TCP by `RLPx` **directly** (never gated on a redundant UDP `DPT.ping` or dropped when the discovery v4 k-bucket is full).
+  - Filter out ENRs whose `ethForkId.forkHash` is not in our chain's `Common` fork schedule, and never auto-queue unsolicited UDP `ping` senders into `RLPx` without chain verification.
+- **No Beacon Node required for Snap Bootstrap:** Acquire the fresh pivot `stateRoot` and `blockNumber` directly from the best connected `eth` peer's latest block header (staying within the 128-block `snapAvailabilityDepth`).
+- **Continuous Parallel `eth/71` BAL Streaming & Routine Rolling-Pivot Heartbeat (`WP-04k` — supersedes static single-pivot `WP-04a`):**
+  - From the moment the initial pivot header `#P_0` is anchored, `BalChainStreamer` runs **in parallel** with `SNAP_SYNCING`, continuously fetching and verifying blocks + `eth/71` Block-Level Access Lists (`#P_k + 1, #P_k + 2, ...`).
+  - Every `PIVOT_STEP_BLOCKS = 16` blocks (keeping target `<= bestPeerHead - 2` so all peers have the root), Ethy steps the active pivot forward (`#P_k → #P_{k+1}`):
+    1. Applies buffered BALs `#P_k + 1 .. #P_{k+1}` only to **already-synced** key-space ranges (`isAccountHashSynced === true`, skipping unsynced `subRanges` that `snap/1` will download directly at `R_{k+1}`).
+    2. Keeps in-flight `snap/1` requests alive by verifying each reply against its per-request `flight.stateRoot` (`R_k`) — zero aborted requests!
+    3. Updates `pivot.json` / `active.json` in place without wiping `accounts/` journals.
+  - When all 16 account buckets (`0x0..0xf`) and code/storage tasks finish, the remaining BAL gap is `0..15` blocks and the node flips into `★ Head Following · Live` (`● HEAD`) with a milestone summary widget in Zone 2.
+- **3-Rule Startup & "Close-the-Laptop" Resume Heuristic (`WP-04a` & `WP-04b`):**
+  1. **Fresh (`--fresh` CLI flag or no saved state):** Wipes `pivots/` while preserving `peers.json` (VIP peer book), anchors fresh `#H`, and starts `snap/1` from `0%`.
+  2. **Unfinished `snap/1` on disk (`pivot = #P`):** If `bestPeerHead - #P <= 90` blocks (~18 min), resume `snap/1` and `BalChainStreamer` together at `#P`. If `90 < gap <= 900` blocks (~3 hours), enter **`bridge-pivot`**: stream `eth/71` BALs to advance `#P` into the live 128-block window (snap schedulers idle via `pivotBridging`), then resume `snap/1` when `head - #P <= 64`. Gap `<= 14_400` when an `ETHY/0` peer serves the BAL tail. Only if the gap exceeds that cap (or bridging stalls with no BAL progress) discard partial `pivots/` and anchor fresh at `#H`.
+  3. **Completed base state on disk (`baseSyncComplete: true` at `#L`) or Laptop Wake:** Never re-run `snap/1`! Transition to `BAL_CATCHUP`, fetch and apply `eth/71` EIP-7928 `BlockLevelAccessList` diffs (`consumeBAL`) for `#L + 1 .. #H`, and enter `HEAD_FOLLOWING`.
+- **VIP Peer Retention, Multi-Peer Pipelining & Discovery Pause (`WP-04a` & `WP-04c`):**
+  - Peers with `snapResponsesOk > 0` are Tier-S (VIP) peers. Never lock out a VIP peer for 1 hour on `TOO_MANY_PEERS`; use short backoff (`15s → 30s → 60s`, max `120s`) and a periodic VIP Reconnect Loop when active `snap/1` peers `< 4`.
+  - Schedule proven `snap/1` peers first (client affinity + RTT via `rankSnapPeers`), pipeline depth from `snapSchedulePolicy` (1 / 4 / 6 in-flight ranges by peer tier), apply a fast 4s timeout to unproven (`snapResponsesOk === 0`) peers, and pause `DPT`/DNS discovery (`setDiscoveryPaused(true)`) while `>= 3` proven `snap/1` peers are actively syncing.
+  - Multi-stage `ETH` bundle fetches (`blockBundle.ts`) must ignore (`'ignore'`) messages from other peers rather than aborting (`'failed'`).
+- **Constant-Time `BinaryAccount` Ingestion & Batched Disk Writes (`WP-04c`):**
+  - Use the 104-byte `BinaryAccount` representation from `@ethereumjs/util` inside `FlatStateManager` and `SnapAccountSynchronizer` (single-pass RLP decode, no million-object `new Account()` heap allocations during sync, single `fs.writeSync` per range batch, and throttled metadata flushes).
+- **Good Citizen & Honest Block-Range Serving on `devp2p` (`WP-03c` & `WP-04a`):**
+  - **`snap/1` (Client Only):** Ethy acts strictly as a client on `snap/1`.
+  - **`eth/69–71` (100% Honest Rolling-Window Server):** Before `RollingBlockStore` holds a complete servable block bundle, outbound `eth/69+` `STATUS` must advertise `earliestBlock = 0, latestBlock = 0, latestBlockHash = genesisHash` (never an unbacked head pin that causes peers to query us, receive `[]`, and drop us). Once `BAL_CATCHUP` / `HEAD_FOLLOWING` builds a contiguous verified tail in `RollingBlockStore`, advertise and serve the exact contiguous `[earliestBlock .. latestBlock]` window.
+
+## 6. Five Systemic P2P & Distributed Scheduler Laws (Preventing Recurring Wrong Turns)
+
+Whenever designing or modifying P2P discovery, peer books, or work schedulers in `@ethereumjs/devp2p` and `@ethereumjs/ethy`, enforce these five laws:
+
+1. **Law 1 — Never Blame the Work Item (Bucket) for a Peer Fault:**
+   - An empty `AccountRange` reply (`[reqId, [], []]`), a bad Merkle proof, or a request timeout is a **peer fault**, not a **bucket fault**.
+   - **Never** set a multi-second `stallUntil` timer on a bucket when a peer fails or times out (which blocks healthy peers from syncing that bucket!). Quarantine/rest the **failing peer** (`peerRestUntil`) and return the bucket to `status = 'pending'` immediately (`0ms` delay).
+   - **Sole-Peer Exception:** Never put the **only** connected proven `snap/1` peer into a long `peerRestUntil` penalty box on a transient timeout (`hasHealthyAlternatePeer === false`); retry immediately with a fresh `reqId` so a 1-peer session never sits at `0/s` for 20–30 seconds.
+2. **Law 2 — Presence != Capability != Proven Service:**
+   - Distinguish strictly between: (a) RLPx `HELLO` connected, (b) `ETH STATUS` validated (`hasHead === true`), (c) `snap/1` negotiated (`snapSession === true`), and (d) **proven `snap/1` server** (`snapResponsesOk > 0`).
+   - Never send `snap/1` requests before `hasHead === true`. Never count non-`snap` peers (`reth` without `snap`, network crawlers) toward `VIP_SNAP_PEER_TARGET` or discovery holds, and filter `snapCapable === false` / crawler nodes out of `PeerBookStore` redial candidates.
+3. **Law 3 — Periodic Telemetry Must Never Clobber Edge-Triggered Backoff Holds:**
+   - `applyTelemetry` / `noteTelemetryPeer` runs every `150ms`. It must update **observation fields only** (`lastStatusAt`, `rttMs`, `clientFamily`, `snapCapable`) and must **never** reset `row.dialAfter = now` or clear backoff counters!
+   - Resetting `dialAfter` on every telemetry tick erases the `noteDialAttempt` dial hold the instant a crawler or non-serving peer handshakes, trapping the dialer in an infinite 5-second redial loop with the same peer. Only clear `dialAfter = 0` inside `noteSnapSuccess` when a peer actually delivers verified work.
+4. **Law 4 — Work-Stealing / Range Bisection Must Mutate Both Bounds (Zero Duplicate Downloads):**
+   - Network work is a **`SnapRangeCursor`** with its own inclusive `[origin .. limit]`; bucket `startHash`/`limitHash` stay fixed nibble bounds.
+   - When bisecting at `mid`, clamp the left cursor's `limit` to `mid` and insert a right cursor at `incrementKey32(mid)`; the in-flight request keeps the **limit it was sent with**, and verified slabs are clipped to `min(sentLimit, cursor.limit)` so a post-send split does not duplicate downloads.
+   - Never issue a one-shot steal that leaves the primary range unchanged while a peer re-downloads the upper half without a persistent upper cursor.
+5. **Law 5 — Test With Mixed Adversarial Peers & Asymptotic Slope Gates (Not Just 2 Happy Peers at `N = 32`):**
+   - Every scheduler or peer-book change must be verified against a **mixed adversarial peer set** (1 proven fast peer + 1 crawler that disconnects after `STATUS` + 1 `eth`-only peer without `snap` + 1 silent-timeout `snap` peer + 1 empty-reply `snap` peer) and assert **zero `0/s` stalls** on the healthy peer, **zero duplicate range downloads** on work-stealing, and **flat memory slope** above `maxResidentAccounts`.
+

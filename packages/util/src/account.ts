@@ -1,111 +1,287 @@
-import assert from 'assert'
-import BN from 'bn.js'
-import * as rlp from 'rlp'
-import {
-  privateKeyVerify,
-  publicKeyCreate,
-  publicKeyVerify,
-  publicKeyConvert,
-} from 'ethereum-cryptography/secp256k1'
-import { stripHexPrefix } from 'ethjs-util'
-import { KECCAK256_RLP, KECCAK256_NULL } from './constants'
-import { zeros, bufferToHex, toBuffer } from './bytes'
-import { keccak, keccak256, keccakFromString, rlphash } from './hash'
-import { assertIsString, assertIsHexString, assertIsBuffer } from './helpers'
-import { BNLike, BufferLike, bnToRlp, toType, TypeOutput } from './types'
+import { RLP } from '@ethereumjs/rlp'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
 
+import {
+  bigIntToUnpaddedBytes,
+  bytesToBigInt,
+  bytesToHex,
+  bytesToInt,
+  concatBytes,
+  equalsBytes,
+  hexToBytes,
+  intToUnpaddedBytes,
+  toBytes,
+  unpadBytes,
+  utf8ToBytes,
+} from './bytes.ts'
+import { BIGINT_0, KECCAK256_NULL, KECCAK256_RLP } from './constants.ts'
+import { EthereumJSErrorWithoutCode } from './errors.ts'
+import { assertIsBytes, assertIsHexString, assertIsString } from './helpers.ts'
+import { stripHexPrefix } from './internal.ts'
+
+import type { BigIntLike, BytesLike, NestedUint8Array, PrefixedHexString } from './types.ts'
+
+/** Plain-object fields for constructing an {@link Account}. */
 export interface AccountData {
-  nonce?: BNLike
-  balance?: BNLike
-  stateRoot?: BufferLike
-  codeHash?: BufferLike
+  /** Account nonce */
+  nonce?: BigIntLike
+  /** Account balance in wei */
+  balance?: BigIntLike
+  /** Storage trie root hash */
+  storageRoot?: BytesLike
+  /** Keccak-256 hash of the contract bytecode (or empty-account sentinel) */
+  codeHash?: BytesLike
 }
 
+/** Partial account fields for stateless / witness-based access (null marks unloaded fields). */
+export interface PartialAccountData {
+  nonce?: BigIntLike | null
+  balance?: BigIntLike | null
+  storageRoot?: BytesLike | null
+  codeHash?: BytesLike | null
+  codeSize?: BigIntLike | null
+  version?: BigIntLike | null
+}
+
+/** RLP account body as a four-tuple of byte arrays. */
+export type AccountBodyBytes = [Uint8Array, Uint8Array, Uint8Array, Uint8Array]
+
+/**
+ * Handles the null indicator for RLP encoded accounts
+ * @returns is the null indicator is 0
+ * @returns The unchanged value is the null indicator is 1
+ * @throws if the null indicator is > 1
+ * @throws if the length of values is < 2
+ * @param value The value to convert
+ * @returns The converted value
+ */
+function handleNullIndicator(values: NestedUint8Array | Uint8Array): Uint8Array | null {
+  // Needed if some values are not provided to the array (e.g. partial account RLP)
+  if (values[0] === undefined) {
+    return null
+  }
+
+  const nullIndicator = bytesToInt(values[0] as Uint8Array)
+
+  if (nullIndicator === 0) {
+    return null
+  }
+  if (nullIndicator > 1) {
+    throw EthereumJSErrorWithoutCode(`Invalid isNullIndicator=${nullIndicator}`)
+  }
+  if (values.length < 2) {
+    throw EthereumJSErrorWithoutCode(`Invalid values length=${values.length}`)
+  }
+  return values[1] as Uint8Array
+}
+
+/**
+ * Account class to load and maintain the  basic account objects.
+ * Supports partial loading and access required for stateless with null
+ * as the placeholder.
+ *
+ * Note: passing undefined in constructor is different from null
+ * While undefined leads to default assignment, null is retained
+ * to track the information not available/loaded because of partial
+ * witness access
+ */
 export class Account {
-  nonce: BN
-  balance: BN
-  stateRoot: Buffer
-  codeHash: Buffer
+  _nonce: bigint | null = null
+  _balance: bigint | null = null
+  _storageRoot: Uint8Array | null = null
+  _codeHash: Uint8Array | null = null
+  // codeSize and version is separately stored in VKT
+  _codeSize: number | null = null
+  _version: number | null = null
 
-  static fromAccountData(accountData: AccountData) {
-    const { nonce, balance, stateRoot, codeHash } = accountData
-
-    return new Account(
-      nonce ? new BN(toBuffer(nonce)) : undefined,
-      balance ? new BN(toBuffer(balance)) : undefined,
-      stateRoot ? toBuffer(stateRoot) : undefined,
-      codeHash ? toBuffer(codeHash) : undefined
-    )
-  }
-
-  public static fromRlpSerializedAccount(serialized: Buffer) {
-    const values = rlp.decode(serialized)
-
-    if (!Array.isArray(values)) {
-      throw new Error('Invalid serialized account input. Must be array')
+  get version() {
+    if (this._version !== null) {
+      return this._version
+    } else {
+      throw Error(`version=${this._version} not loaded`)
     }
-
-    return this.fromValuesArray(values)
+  }
+  set version(_version: number) {
+    this._version = _version
   }
 
-  public static fromValuesArray(values: Buffer[]) {
-    const [nonce, balance, stateRoot, codeHash] = values
+  get nonce() {
+    if (this._nonce !== null) {
+      return this._nonce
+    } else {
+      throw Error(`nonce=${this._nonce} not loaded`)
+    }
+  }
+  set nonce(_nonce: bigint) {
+    this._nonce = _nonce
+  }
 
-    return new Account(new BN(nonce), new BN(balance), stateRoot, codeHash)
+  get balance() {
+    if (this._balance !== null) {
+      return this._balance
+    } else {
+      throw Error(`balance=${this._balance} not loaded`)
+    }
+  }
+  set balance(_balance: bigint) {
+    this._balance = _balance
+  }
+
+  get storageRoot() {
+    if (this._storageRoot !== null) {
+      return this._storageRoot
+    } else {
+      throw Error(`storageRoot=${this._storageRoot} not loaded`)
+    }
+  }
+  set storageRoot(_storageRoot: Uint8Array) {
+    this._storageRoot = _storageRoot
+  }
+
+  get codeHash() {
+    if (this._codeHash !== null) {
+      return this._codeHash
+    } else {
+      throw Error(`codeHash=${this._codeHash} not loaded`)
+    }
+  }
+  set codeHash(_codeHash: Uint8Array) {
+    this._codeHash = _codeHash
+  }
+
+  get codeSize() {
+    if (this._codeSize !== null) {
+      return this._codeSize
+    } else {
+      throw Error(`codeSize=${this._codeSize} not loaded`)
+    }
+  }
+  set codeSize(_codeSize: number) {
+    this._codeSize = _codeSize
   }
 
   /**
    * This constructor assigns and validates the values.
-   * Use the static factory methods to assist in creating an Account from varying data types.
+   * It is not recommended to use this constructor directly. Instead use the static
+   * factory methods to assist in creating an Account from varying data types.
+   * undefined get assigned with the defaults, but null args are retained as is
+   * @deprecated
    */
   constructor(
-    nonce = new BN(0),
-    balance = new BN(0),
-    stateRoot = KECCAK256_RLP,
-    codeHash = KECCAK256_NULL
+    nonce: bigint | null = BIGINT_0,
+    balance: bigint | null = BIGINT_0,
+    storageRoot: Uint8Array | null = KECCAK256_RLP,
+    codeHash: Uint8Array | null = KECCAK256_NULL,
+    codeSize: number | null = 0,
+    version: number | null = 0,
   ) {
-    this.nonce = nonce
-    this.balance = balance
-    this.stateRoot = stateRoot
-    this.codeHash = codeHash
+    this._nonce = nonce
+    this._balance = balance
+    this._storageRoot = storageRoot
+    this._codeHash = codeHash
+
+    if (codeSize === null && codeHash !== null && !this.isContract()) {
+      codeSize = 0
+    }
+    this._codeSize = codeSize
+    this._version = version
 
     this._validate()
   }
 
   private _validate() {
-    if (this.nonce.lt(new BN(0))) {
-      throw new Error('nonce must be greater than zero')
+    if (this._nonce !== null && this._nonce < BIGINT_0) {
+      throw EthereumJSErrorWithoutCode('nonce must be greater than zero')
     }
-    if (this.balance.lt(new BN(0))) {
-      throw new Error('balance must be greater than zero')
+    if (this._balance !== null && this._balance < BIGINT_0) {
+      throw EthereumJSErrorWithoutCode('balance must be greater than zero')
     }
-    if (this.stateRoot.length !== 32) {
-      throw new Error('stateRoot must have a length of 32')
+    if (this._storageRoot !== null && this._storageRoot.length !== 32) {
+      throw EthereumJSErrorWithoutCode('storageRoot must have a length of 32')
     }
-    if (this.codeHash.length !== 32) {
-      throw new Error('codeHash must have a length of 32')
+    if (this._codeHash !== null && this._codeHash.length !== 32) {
+      throw EthereumJSErrorWithoutCode('codeHash must have a length of 32')
+    }
+    if (this._codeSize !== null && this._codeSize < BIGINT_0) {
+      throw EthereumJSErrorWithoutCode('codeSize must be greater than zero')
     }
   }
 
   /**
-   * Returns a Buffer Array of the raw Buffers for the account, in order.
+   * Returns an array of Uint8Arrays of the raw bytes for the account, in order.
    */
-  raw(): Buffer[] {
-    return [bnToRlp(this.nonce), bnToRlp(this.balance), this.stateRoot, this.codeHash]
+  raw(): Uint8Array[] {
+    return [
+      bigIntToUnpaddedBytes(this.nonce),
+      bigIntToUnpaddedBytes(this.balance),
+      this.storageRoot,
+      this.codeHash,
+    ]
   }
 
   /**
-   * Returns the RLP serialization of the account as a `Buffer`.
+   * Returns the RLP serialization of the account as a `Uint8Array`.
    */
-  serialize(): Buffer {
-    return rlp.encode(this.raw())
+  serialize(): Uint8Array {
+    return RLP.encode(this.raw())
+  }
+
+  serializeWithPartialInfo(): Uint8Array {
+    const partialData = []
+    const zeroEncoded = intToUnpaddedBytes(0)
+    const oneEncoded = intToUnpaddedBytes(1)
+
+    if (this._nonce !== null) {
+      partialData.push([oneEncoded, bigIntToUnpaddedBytes(this._nonce)])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    if (this._balance !== null) {
+      partialData.push([oneEncoded, bigIntToUnpaddedBytes(this._balance)])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    if (this._storageRoot !== null) {
+      partialData.push([oneEncoded, this._storageRoot])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    if (this._codeHash !== null) {
+      partialData.push([oneEncoded, this._codeHash])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    if (this._codeSize !== null) {
+      partialData.push([oneEncoded, intToUnpaddedBytes(this._codeSize)])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    if (this._version !== null) {
+      partialData.push([oneEncoded, intToUnpaddedBytes(this._version)])
+    } else {
+      partialData.push([zeroEncoded])
+    }
+
+    return RLP.encode(partialData)
   }
 
   /**
    * Returns a `Boolean` determining if the account is a contract.
    */
   isContract(): boolean {
-    return !this.codeHash.equals(KECCAK256_NULL)
+    if (this._codeHash === null && this._codeSize === null) {
+      throw Error(`Insufficient data as codeHash=null and codeSize=null`)
+    }
+    return (
+      (this._codeHash !== null && !equalsBytes(this._codeHash, KECCAK256_NULL)) ||
+      (this._codeSize !== null && this._codeSize !== 0)
+    )
   }
 
   /**
@@ -114,17 +290,126 @@ export class Account {
    * "An account is considered empty when it has no code and zero nonce and zero balance."
    */
   isEmpty(): boolean {
-    return this.balance.isZero() && this.nonce.isZero() && this.codeHash.equals(KECCAK256_NULL)
+    // helpful for determination in partial accounts
+    if (
+      (this._balance !== null && this.balance !== BIGINT_0) ||
+      (this._nonce !== null && this.nonce !== BIGINT_0) ||
+      (this._codeHash !== null && !equalsBytes(this.codeHash, KECCAK256_NULL))
+    ) {
+      return false
+    }
+
+    return (
+      this.balance === BIGINT_0 &&
+      this.nonce === BIGINT_0 &&
+      equalsBytes(this.codeHash, KECCAK256_NULL)
+    )
   }
+}
+
+// Account constructors
+
+/**
+ * Creates an account from a plain data object with all required fields present.
+ *
+ * @param accountData Account fields (`nonce`, `balance`, `storageRoot`, `codeHash`)
+ */
+export function createAccount(accountData: AccountData) {
+  const { nonce, balance, storageRoot, codeHash } = accountData
+  if (nonce === null || balance === null || storageRoot === null || codeHash === null) {
+    throw Error(`Partial fields not supported in fromAccountData`)
+  }
+
+  return new Account(
+    nonce !== undefined ? bytesToBigInt(toBytes(nonce)) : undefined,
+    balance !== undefined ? bytesToBigInt(toBytes(balance)) : undefined,
+    storageRoot !== undefined ? toBytes(storageRoot) : undefined,
+    codeHash !== undefined ? toBytes(codeHash) : undefined,
+  )
+}
+
+/**
+ * Creates an account from an RLP-decoded values array:
+ * `[nonce, balance, storageRoot, codeHash]`.
+ */
+export function createAccountFromBytesArray(values: Uint8Array[]) {
+  const [nonce, balance, storageRoot, codeHash] = values
+
+  return new Account(bytesToBigInt(nonce), bytesToBigInt(balance), storageRoot, codeHash)
+}
+
+/**
+ * Creates a partially loaded account for stateless execution.
+ * Fields may be `null` when not available from a witness.
+ */
+export function createPartialAccount(partialAccountData: PartialAccountData) {
+  const { nonce, balance, storageRoot, codeHash, codeSize, version } = partialAccountData
+
+  if (
+    nonce === null &&
+    balance === null &&
+    storageRoot === null &&
+    codeHash === null &&
+    codeSize === null &&
+    version === null
+  ) {
+    throw Error(`All partial fields null`)
+  }
+
+  return new Account(
+    nonce !== undefined && nonce !== null ? bytesToBigInt(toBytes(nonce)) : nonce,
+    balance !== undefined && balance !== null ? bytesToBigInt(toBytes(balance)) : balance,
+    storageRoot !== undefined && storageRoot !== null ? toBytes(storageRoot) : storageRoot,
+    codeHash !== undefined && codeHash !== null ? toBytes(codeHash) : codeHash,
+    codeSize !== undefined && codeSize !== null ? bytesToInt(toBytes(codeSize)) : codeSize,
+    version !== undefined && version !== null ? bytesToInt(toBytes(version)) : version,
+  )
+}
+
+/** Creates an account from an RLP-serialized account body. */
+export function createAccountFromRLP(serialized: Uint8Array) {
+  const values = RLP.decode(serialized) as Uint8Array[]
+
+  if (!Array.isArray(values)) {
+    throw EthereumJSErrorWithoutCode('Invalid serialized account input. Must be array')
+  }
+
+  return createAccountFromBytesArray(values)
+}
+
+/** Creates a partially loaded account from an RLP-serialized slim account body. */
+export function createPartialAccountFromRLP(serialized: Uint8Array) {
+  const values = RLP.decode(serialized)
+
+  if (!Array.isArray(values)) {
+    throw EthereumJSErrorWithoutCode('Invalid serialized account input. Must be array')
+  }
+
+  for (const value of values) {
+    // Ensure that each array item is an array
+    if (!Array.isArray(value)) {
+      throw EthereumJSErrorWithoutCode('Invalid partial encoding. Each item must be an array')
+    }
+  }
+
+  const [nonceRaw, balanceRaw, storageRoot, codeHash, codeSizeRaw, versionRaw] =
+    values.map(handleNullIndicator)
+
+  const nonce = nonceRaw === null ? null : bytesToBigInt(nonceRaw)
+  const balance = balanceRaw === null ? null : bytesToBigInt(balanceRaw)
+  const codeSize = codeSizeRaw === null ? null : bytesToInt(codeSizeRaw)
+  const version = versionRaw === null ? null : bytesToInt(versionRaw)
+
+  return createPartialAccount({ balance, nonce, storageRoot, codeHash, codeSize, version })
 }
 
 /**
  * Checks if the address is a valid. Accepts checksummed addresses too.
  */
-export const isValidAddress = function (hexAddress: string): boolean {
+export const isValidAddress = function (hexAddress: string): hexAddress is PrefixedHexString {
   try {
     assertIsString(hexAddress)
-  } catch (e) {
+  } catch {
     return false
   }
 
@@ -134,25 +419,31 @@ export const isValidAddress = function (hexAddress: string): boolean {
 /**
  * Returns a checksummed address.
  *
- * If a eip1191ChainId is provided, the chainId will be included in the checksum calculation. This
+ * If an eip1191ChainId is provided, the chainId will be included in the checksum calculation. This
  * has the effect of checksummed addresses for one chain having invalid checksums for others.
  * For more details see [EIP-1191](https://eips.ethereum.org/EIPS/eip-1191).
  *
- * WARNING: Checksums with and without the chainId will differ. As of 2019-06-26, the most commonly
- * used variation in Ethereum was without the chainId. This may change in the future.
+ * WARNING: Checksums with and without the chainId will differ and the EIP-1191 checksum is not
+ * backwards compatible to the original widely adopted checksum format standard introduced in
+ * [EIP-55](https://eips.ethereum.org/EIPS/eip-55), so this will break in existing applications.
+ * Usage of this EIP is therefore discouraged unless you have a very targeted use case.
  */
-export const toChecksumAddress = function (hexAddress: string, eip1191ChainId?: BNLike): string {
+export const toChecksumAddress = function (
+  hexAddress: string,
+  eip1191ChainId?: BigIntLike,
+): PrefixedHexString {
   assertIsHexString(hexAddress)
   const address = stripHexPrefix(hexAddress).toLowerCase()
 
   let prefix = ''
-  if (eip1191ChainId) {
-    const chainId = toType(eip1191ChainId, TypeOutput.BN)
+  if (eip1191ChainId !== undefined) {
+    const chainId = bytesToBigInt(toBytes(eip1191ChainId))
     prefix = chainId.toString() + '0x'
   }
 
-  const hash = keccakFromString(prefix + address).toString('hex')
-  let ret = '0x'
+  const bytes = utf8ToBytes(prefix + address)
+  const hash = bytesToHex(keccak_256(bytes)).slice(2)
+  let ret = ''
 
   for (let i = 0; i < address.length; i++) {
     if (parseInt(hash[i], 16) >= 8) {
@@ -162,7 +453,7 @@ export const toChecksumAddress = function (hexAddress: string, eip1191ChainId?: 
     }
   }
 
-  return ret
+  return `0x${ret}`
 }
 
 /**
@@ -172,7 +463,7 @@ export const toChecksumAddress = function (hexAddress: string, eip1191ChainId?: 
  */
 export const isValidChecksumAddress = function (
   hexAddress: string,
-  eip1191ChainId?: BNLike
+  eip1191ChainId?: BigIntLike,
 ): boolean {
   return isValidAddress(hexAddress) && toChecksumAddress(hexAddress, eip1191ChainId) === hexAddress
 }
@@ -182,19 +473,13 @@ export const isValidChecksumAddress = function (
  * @param from The address which is creating this new address
  * @param nonce The nonce of the from account
  */
-export const generateAddress = function (from: Buffer, nonce: Buffer): Buffer {
-  assertIsBuffer(from)
-  assertIsBuffer(nonce)
-  const nonceBN = new BN(nonce)
+export const generateAddress = function (from: Uint8Array, nonce: Uint8Array): Uint8Array {
+  assertIsBytes(from)
+  assertIsBytes(nonce)
 
-  if (nonceBN.isZero()) {
-    // in RLP we want to encode null in the case of zero nonce
-    // read the RLP documentation for an answer if you dare
-    return rlphash([from, null]).slice(-20)
-  }
-
+  // The nonce is an RLP integer: drop leading zeros, so a zero nonce encodes as empty bytes
   // Only take the lower 160bits of the hash
-  return rlphash([from, Buffer.from(nonceBN.toArray())]).slice(-20)
+  return keccak_256(RLP.encode([from, unpadBytes(nonce)])).subarray(-20)
 }
 
 /**
@@ -203,26 +488,32 @@ export const generateAddress = function (from: Buffer, nonce: Buffer): Buffer {
  * @param salt A salt
  * @param initCode The init code of the contract being created
  */
-export const generateAddress2 = function (from: Buffer, salt: Buffer, initCode: Buffer): Buffer {
-  assertIsBuffer(from)
-  assertIsBuffer(salt)
-  assertIsBuffer(initCode)
+export const generateAddress2 = function (
+  from: Uint8Array,
+  salt: Uint8Array,
+  initCode: Uint8Array,
+): Uint8Array {
+  assertIsBytes(from)
+  assertIsBytes(salt)
+  assertIsBytes(initCode)
 
-  assert(from.length === 20)
-  assert(salt.length === 32)
+  if (from.length !== 20) {
+    throw EthereumJSErrorWithoutCode('Expected from to be of length 20')
+  }
+  if (salt.length !== 32) {
+    throw EthereumJSErrorWithoutCode('Expected salt to be of length 32')
+  }
 
-  const address = keccak256(
-    Buffer.concat([Buffer.from('ff', 'hex'), from, salt, keccak256(initCode)])
-  )
+  const address = keccak_256(concatBytes(hexToBytes('0xff'), from, salt, keccak_256(initCode)))
 
-  return address.slice(-20)
+  return address.subarray(-20)
 }
 
 /**
  * Checks if the private key satisfies the rules of the curve secp256k1.
  */
-export const isValidPrivate = function (privateKey: Buffer): boolean {
-  return privateKeyVerify(privateKey)
+export const isValidPrivate = function (privateKey: Uint8Array): boolean {
+  return secp256k1.utils.isValidSecretKey(privateKey)
 }
 
 /**
@@ -231,18 +522,29 @@ export const isValidPrivate = function (privateKey: Buffer): boolean {
  * @param publicKey The two points of an uncompressed key, unless sanitize is enabled
  * @param sanitize Accept public keys in other formats
  */
-export const isValidPublic = function (publicKey: Buffer, sanitize: boolean = false): boolean {
-  assertIsBuffer(publicKey)
+export const isValidPublic = function (publicKey: Uint8Array, sanitize: boolean = false): boolean {
+  assertIsBytes(publicKey)
   if (publicKey.length === 64) {
     // Convert to SEC1 for secp256k1
-    return publicKeyVerify(Buffer.concat([Buffer.from([4]), publicKey]))
+    // Automatically checks whether point is on curve
+    try {
+      secp256k1.Point.fromBytes(concatBytes(Uint8Array.from([4]), publicKey))
+      return true
+    } catch {
+      return false
+    }
   }
 
   if (!sanitize) {
     return false
   }
 
-  return publicKeyVerify(publicKey)
+  try {
+    secp256k1.Point.fromBytes(publicKey)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -251,42 +553,45 @@ export const isValidPublic = function (publicKey: Buffer, sanitize: boolean = fa
  * @param pubKey The two points of an uncompressed key, unless sanitize is enabled
  * @param sanitize Accept public keys in other formats
  */
-export const pubToAddress = function (pubKey: Buffer, sanitize: boolean = false): Buffer {
-  assertIsBuffer(pubKey)
+export const pubToAddress = function (pubKey: Uint8Array, sanitize: boolean = false): Uint8Array {
+  assertIsBytes(pubKey)
   if (sanitize && pubKey.length !== 64) {
-    pubKey = Buffer.from(publicKeyConvert(pubKey, false).slice(1))
+    pubKey = secp256k1.Point.fromBytes(pubKey).toBytes(false).slice(1)
   }
-  assert(pubKey.length === 64)
+  if (pubKey.length !== 64) {
+    throw EthereumJSErrorWithoutCode('Expected pubKey to be of length 64')
+  }
   // Only take the lower 160bits of the hash
-  return keccak(pubKey).slice(-20)
+  return keccak_256(pubKey).subarray(-20)
 }
+/** Alias for {@link pubToAddress}. */
 export const publicToAddress = pubToAddress
 
 /**
  * Returns the ethereum public key of a given private key.
  * @param privateKey A private key must be 256 bits wide
  */
-export const privateToPublic = function (privateKey: Buffer): Buffer {
-  assertIsBuffer(privateKey)
+export const privateToPublic = function (privateKey: Uint8Array): Uint8Array {
+  assertIsBytes(privateKey)
   // skip the type flag and use the X, Y points
-  return Buffer.from(publicKeyCreate(privateKey, false)).slice(1)
+  return secp256k1.getPublicKey(privateKey, false).slice(1)
 }
 
 /**
  * Returns the ethereum address of a given private key.
  * @param privateKey A private key must be 256 bits wide
  */
-export const privateToAddress = function (privateKey: Buffer): Buffer {
+export const privateToAddress = function (privateKey: Uint8Array): Uint8Array {
   return publicToAddress(privateToPublic(privateKey))
 }
 
 /**
  * Converts a public key to the Ethereum format.
  */
-export const importPublic = function (publicKey: Buffer): Buffer {
-  assertIsBuffer(publicKey)
+export const importPublic = function (publicKey: Uint8Array): Uint8Array {
+  assertIsBytes(publicKey)
   if (publicKey.length !== 64) {
-    publicKey = Buffer.from(publicKeyConvert(publicKey, false).slice(1))
+    publicKey = secp256k1.Point.fromBytes(publicKey).toBytes(false).slice(1)
   }
   return publicKey
 }
@@ -294,10 +599,8 @@ export const importPublic = function (publicKey: Buffer): Buffer {
 /**
  * Returns the zero address.
  */
-export const zeroAddress = function (): string {
-  const addressLength = 20
-  const addr = zeros(addressLength)
-  return bufferToHex(addr)
+export const zeroAddress = function (): PrefixedHexString {
+  return bytesToHex(new Uint8Array(20))
 }
 
 /**
@@ -306,10 +609,43 @@ export const zeroAddress = function (): string {
 export const isZeroAddress = function (hexAddress: string): boolean {
   try {
     assertIsString(hexAddress)
-  } catch (e) {
+  } catch {
     return false
   }
 
   const zeroAddr = zeroAddress()
   return zeroAddr === hexAddress
+}
+
+/** Expand a slim RLP account body to the full four-field layout. */
+export function accountBodyFromSlim(body: AccountBodyBytes) {
+  const [nonce, balance, storageRoot, codeHash] = body
+  return [
+    nonce,
+    balance,
+    storageRoot.length === 0 ? KECCAK256_RLP : storageRoot,
+    codeHash.length === 0 ? KECCAK256_NULL : codeHash,
+  ]
+}
+
+const emptyUint8Arr = new Uint8Array(0)
+/** Compress an account body to the slim RLP layout when possible. */
+export function accountBodyToSlim(body: AccountBodyBytes) {
+  const [nonce, balance, storageRoot, codeHash] = body
+  return [
+    nonce,
+    balance,
+    equalsBytes(storageRoot, KECCAK256_RLP) ? emptyUint8Arr : storageRoot,
+    equalsBytes(codeHash, KECCAK256_NULL) ? emptyUint8Arr : codeHash,
+  ]
+}
+
+/**
+ * Converts a slim account (per snap protocol spec) to the RLP encoded version of the account
+ * @param body Array of 4 Uint8Array-like items to represent the account
+ * @returns RLP encoded version of the account
+ */
+export function accountBodyToRLP(body: AccountBodyBytes, couldBeSlim = true) {
+  const accountBody = couldBeSlim ? accountBodyFromSlim(body) : body
+  return RLP.encode(accountBody)
 }

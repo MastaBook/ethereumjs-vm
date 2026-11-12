@@ -1,33 +1,27 @@
-import assert from 'assert'
-import * as base32 from 'hi-base32'
-import * as rlp from 'rlp'
-import { sscanf } from 'scanf'
-import { ecdsaVerify } from 'secp256k1'
-import Multiaddr from 'multiaddr'
-import base64url from 'base64url'
-import { PeerInfo } from '../dpt'
-import { toNewUint8Array, keccak256 } from '../util'
+import { RLP } from '@ethereumjs/rlp'
+import { EthereumJSErrorWithoutCode, bytesToUtf8, utf8ToBytes } from '@ethereumjs/util'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { base32, base64url } from '@scure/base'
 
-const Convert = require('multiaddr/src/convert')
+import { enrPairsFromKvs, peerFieldsFromEnrPairs } from './enrPeerFields.ts'
 
-type ProtocolCodes = {
-  ipCode: number
-  tcpCode: number
-  udpCode: number
-}
+import type { Common } from '@ethereumjs/common'
+import type { PeerInfo } from '../types.ts'
 
 type ENRRootValues = {
-  eRoot: string
-  lRoot: string
-  seq: number
-  signature: string
+  eRoot?: string
+  lRoot?: string
+  seq?: number
+  signature?: string
 }
 
 type ENRTreeValues = {
-  publicKey: string
-  domain: string
+  publicKey?: string
+  domain?: string
 }
 
+/** Parser and verifier for EIP-778 ENR records and EIP-1459 DNS tree TXT entries. */
 export class ENR {
   public static readonly RECORD_PREFIX = 'enr:'
   public static readonly TREE_PREFIX = 'enrtree:'
@@ -47,38 +41,43 @@ export class ENR {
    * @param  {string}   enr
    * @return {PeerInfo}
    */
-  static parseAndVerifyRecord(enr: string): PeerInfo {
-    assert(
-      enr.startsWith(this.RECORD_PREFIX),
-      `String encoded ENR must start with '${this.RECORD_PREFIX}'`
-    )
+  static parseAndVerifyRecord(enr: string, common?: Common): PeerInfo {
+    if (!enr.startsWith(this.RECORD_PREFIX))
+      throw EthereumJSErrorWithoutCode(`String encoded ENR must start with '${this.RECORD_PREFIX}'`)
 
-    // ENRs are RLP encoded and written to DNS TXT entries as base64 url-safe strings
-    const base64BufferEnr = base64url.toBuffer(enr.slice(this.RECORD_PREFIX.length))
-    const decoded = (rlp.decode(base64BufferEnr) as unknown) as Buffer[]
+    // ENRs are RLP encoded and written to DNS TXT entries as base64 url-safe strings respectively
+    // RawURLEncoding, which is the unpadded alternate base64 encoding defined in RFC 4648
+    // Records need to prepared like the following: replace - wth +, replace _ with / and add padding
+    let enrMod = enr.slice(this.RECORD_PREFIX.length)
+    enr = enrMod.replace('-', '+').replace('_', '/')
+    while (enrMod.length % 4 !== 0) {
+      enrMod = enrMod + '='
+    }
+    const base64BytesEnr = base64url.decode(enrMod)
+    const decoded = RLP.decode(base64BytesEnr)
     const [signature, seq, ...kvs] = decoded
 
-    // Convert ENR key/value pairs to object
-    const obj: Record<string, Buffer> = {}
-
-    for (let i = 0; i < kvs.length; i += 2) {
-      obj[kvs[i].toString()] = Buffer.from(kvs[i + 1])
-    }
+    const obj = enrPairsFromKvs(kvs as Uint8Array[])
 
     // Validate sig
-    const isVerified = ecdsaVerify(signature, keccak256(rlp.encode([seq, ...kvs])), obj.secp256k1)
+    const hash = (common?.customCrypto.keccak256 ?? keccak_256)(RLP.encode([seq, ...kvs]))
+    // secp256k1.verify expects signature in compact format (64 bytes) and public key
+    // The signature from ENR is 65 bytes (r, s, recovery), we need to extract r and s
+    const sigBytes = signature as Uint8Array
+    const sigCompact = sigBytes.length === 65 ? sigBytes.subarray(0, 64) : sigBytes
 
-    assert(isVerified, 'Unable to verify ENR signature')
-
-    const { ipCode, tcpCode, udpCode } = this._getIpProtocolConversionCodes(obj.id)
-
-    const peerInfo: PeerInfo = {
-      address: Convert.toString(ipCode, obj.ip) as string,
-      tcpPort: Convert.toString(tcpCode, toNewUint8Array(obj.tcp)) as number,
-      udpPort: Convert.toString(udpCode, toNewUint8Array(obj.udp)) as number,
+    const pub = obj.secp256k1
+    if (!(pub instanceof Uint8Array)) {
+      throw EthereumJSErrorWithoutCode('ENR secp256k1 key missing')
     }
+    const isVerified = secp256k1.verify(sigCompact, hash, pub, {
+      lowS: false,
+      prehash: false,
+    })
 
-    return peerInfo
+    if (!isVerified) throw EthereumJSErrorWithoutCode('Unable to verify ENR signature')
+
+    return peerFieldsFromEnrPairs(obj)
   }
 
   /**
@@ -89,41 +88,43 @@ export class ENR {
    * @param  {string} root  (See EIP-1459 for encoding details)
    * @return {string} subdomain subdomain to retrieve branch records from.
    */
-  static parseAndVerifyRoot(root: string, publicKey: string): string {
-    assert(
-      root.startsWith(this.ROOT_PREFIX),
-      `ENR root entry must start with '${this.ROOT_PREFIX}'`
-    )
+  static parseAndVerifyRoot(root: string, publicKey: string, common?: Common): string {
+    if (!root.startsWith(this.ROOT_PREFIX))
+      throw EthereumJSErrorWithoutCode(`ENR root entry must start with '${this.ROOT_PREFIX}'`)
 
-    const rootVals = sscanf(
-      root,
-      `${this.ROOT_PREFIX}v1 e=%s l=%s seq=%d sig=%s`,
-      'eRoot',
-      'lRoot',
-      'seq',
-      'signature'
-    ) as ENRRootValues
+    const rootValues = parseEnrRootEntry(root)
 
-    assert.ok(rootVals.eRoot, "Could not parse 'e' value from ENR root entry")
-    assert.ok(rootVals.lRoot, "Could not parse 'l' value from ENR root entry")
-    assert.ok(rootVals.seq, "Could not parse 'seq' value from ENR root entry")
-    assert.ok(rootVals.signature, "Could not parse 'sig' value from ENR root entry")
+    if (rootValues.eRoot === undefined)
+      throw EthereumJSErrorWithoutCode("Could not parse 'e' value from ENR root entry")
+    if (rootValues.lRoot === undefined)
+      throw EthereumJSErrorWithoutCode("Could not parse 'l' value from ENR root entry")
+    if (rootValues.seq === undefined)
+      throw EthereumJSErrorWithoutCode("Could not parse 'seq' value from ENR root entry")
+    if (rootValues.signature === undefined)
+      throw EthereumJSErrorWithoutCode("Could not parse 'sig' value from ENR root entry")
 
-    const decodedPublicKey = base32.decode.asBytes(publicKey)
+    const decodedPublicKey = [...base32.decode(publicKey + '===').values()]
 
-    // The signature is a 65-byte secp256k1 over the keccak256 hash
+    // The signature is a 65-byte secp256k1 over the keccak_256 hash
     // of the record content, excluding the `sig=` part, encoded as URL-safe base64 string
     // (Trailing recovery bit must be trimmed to pass `ecdsaVerify` method)
     const signedComponent = root.split(' sig')[0]
-    const signedComponentBuffer = Buffer.from(signedComponent)
-    const signatureBuffer = base64url.toBuffer(rootVals.signature).slice(0, 64)
-    const keyBuffer = Buffer.from(decodedPublicKey)
+    const signedComponentBytes = utf8ToBytes(signedComponent)
+    const signatureBytes = Uint8Array.from(
+      [...base64url.decode(rootValues.signature + '=').values()].slice(0, 64),
+    )
 
-    const isVerified = ecdsaVerify(signatureBuffer, keccak256(signedComponentBuffer), keyBuffer)
+    const keyBytes = Uint8Array.from(decodedPublicKey)
+    const hash = (common?.customCrypto.keccak256 ?? keccak_256)(signedComponentBytes)
 
-    assert(isVerified, 'Unable to verify ENR root signature')
+    const isVerified = secp256k1.verify(signatureBytes, hash, keyBytes, {
+      lowS: false,
+      prehash: false,
+    })
 
-    return rootVals.eRoot
+    if (!isVerified) throw EthereumJSErrorWithoutCode('Unable to verify ENR root signature')
+
+    return rootValues.eRoot!
   }
 
   /**
@@ -135,22 +136,17 @@ export class ENR {
    * @return {ENRTreeValues}
    */
   static parseTree(tree: string): ENRTreeValues {
-    assert(
-      tree.startsWith(this.TREE_PREFIX),
-      `ENR tree entry must start with '${this.TREE_PREFIX}'`
-    )
+    if (!tree.startsWith(this.TREE_PREFIX))
+      throw EthereumJSErrorWithoutCode(`ENR tree entry must start with '${this.TREE_PREFIX}'`)
 
-    const treeVals = sscanf(
-      tree,
-      `${this.TREE_PREFIX}//%s@%s`,
-      'publicKey',
-      'domain'
-    ) as ENRTreeValues
+    const treeValues = parseEnrTreeEntry(tree)
 
-    assert.ok(treeVals.publicKey, 'Could not parse public key from ENR tree entry')
-    assert.ok(treeVals.domain, 'Could not parse domain from ENR tree entry')
+    if (treeValues.publicKey === undefined)
+      throw EthereumJSErrorWithoutCode('Could not parse public key from ENR tree entry')
+    if (treeValues.domain === undefined)
+      throw EthereumJSErrorWithoutCode('Could not parse domain from ENR tree entry')
 
-    return treeVals
+    return treeValues
   }
 
   /**
@@ -160,37 +156,52 @@ export class ENR {
    * @return {string[]}
    */
   static parseBranch(branch: string): string[] {
-    assert(
-      branch.startsWith(this.BRANCH_PREFIX),
-      `ENR branch entry must start with '${this.BRANCH_PREFIX}'`
-    )
+    if (!branch.startsWith(this.BRANCH_PREFIX))
+      throw EthereumJSErrorWithoutCode(`ENR branch entry must start with '${this.BRANCH_PREFIX}'`)
 
     return branch.split(this.BRANCH_PREFIX)[1].split(',')
   }
+}
 
-  /**
-   * Gets relevant multiaddr conversion codes for ipv4, ipv6 and tcp, udp formats
-   * @param  {Buffer}        protocolId
-   * @return {ProtocolCodes}
-   */
-  static _getIpProtocolConversionCodes(protocolId: Buffer): ProtocolCodes {
-    let ipCode
+/** Parses `enrtree-root:v1 e=… l=… seq=… sig=…` (EIP-1459). */
+function parseEnrRootEntry(root: string): ENRRootValues {
+  const prefix = `${ENR.ROOT_PREFIX}v1 `
+  if (!root.startsWith(prefix)) {
+    return { eRoot: undefined, lRoot: undefined, seq: undefined, signature: undefined }
+  }
+  const rest = root.slice(prefix.length)
+  const fields: Record<string, string> = {}
+  for (const part of rest.split(/\s+/)) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    fields[part.slice(0, eq)] = part.slice(eq + 1)
+  }
+  const seqRaw = fields.seq
+  const seq = seqRaw === undefined ? undefined : Number.parseInt(seqRaw, 10)
+  return {
+    eRoot: fields.e,
+    lRoot: fields.l,
+    seq: seq !== undefined && Number.isNaN(seq) ? undefined : seq,
+    signature: fields.sig,
+  }
+}
 
-    switch (protocolId.toString()) {
-      case 'v4':
-        ipCode = Multiaddr.protocols.names.ip4.code
-        break
-      case 'v6':
-        ipCode = Multiaddr.protocols.names.ip6.code
-        break
-      default:
-        throw new Error("IP protocol must be 'v4' or 'v6'")
-    }
-
+/** Parses `enrtree://<publicKey>@<domain>` (EIP-1459). */
+function parseEnrTreeEntry(tree: string): ENRTreeValues {
+  const prefix = `${ENR.TREE_PREFIX}//`
+  if (!tree.startsWith(prefix)) {
+    return { publicKey: undefined, domain: undefined }
+  }
+  const rest = tree.slice(prefix.length)
+  const at = rest.indexOf('@')
+  if (at <= 0) {
     return {
-      ipCode,
-      tcpCode: Multiaddr.protocols.names.tcp.code,
-      udpCode: Multiaddr.protocols.names.udp.code,
+      publicKey: at === -1 && rest.length > 0 ? rest : undefined,
+      domain: undefined,
     }
+  }
+  return {
+    publicKey: rest.slice(0, at),
+    domain: rest.slice(at + 1),
   }
 }

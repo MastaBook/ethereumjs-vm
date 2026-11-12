@@ -1,9 +1,0 @@
-{
-    "extends": "@ethereumjs/config-typescript",
-    "compilerOptions": {
-        "outDir": "./dist",
-        "lib": ["dom"]
-      },
-    "include": ["src/**/*.ts", "test/*.spec.ts"]
-}
-  

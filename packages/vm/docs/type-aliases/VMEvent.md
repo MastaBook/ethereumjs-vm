@@ -1,0 +1,101 @@
+[**@ethereumjs/vm**](../README.md)
+
+***
+
+[@ethereumjs/vm](../README.md) / VMEvent
+
+# Type Alias: VMEvent
+
+> **VMEvent** = `object`
+
+Defined in: [vm/src/types.ts:87](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L87)
+
+VM lifecycle events emitted around block and transaction processing.
+
+## Properties
+
+### afterBlock
+
+> **afterBlock**: (`data`, `resolve?`) => `void`
+
+Defined in: [vm/src/types.ts:89](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L89)
+
+#### Parameters
+
+##### data
+
+[`AfterBlockEvent`](../interfaces/AfterBlockEvent.md)
+
+##### resolve?
+
+(`result?`) => `void`
+
+#### Returns
+
+`void`
+
+***
+
+### afterTx
+
+> **afterTx**: (`data`, `resolve?`) => `void`
+
+Defined in: [vm/src/types.ts:91](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L91)
+
+#### Parameters
+
+##### data
+
+[`AfterTxEvent`](../interfaces/AfterTxEvent.md)
+
+##### resolve?
+
+(`result?`) => `void`
+
+#### Returns
+
+`void`
+
+***
+
+### beforeBlock
+
+> **beforeBlock**: (`data`, `resolve?`) => `void`
+
+Defined in: [vm/src/types.ts:88](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L88)
+
+#### Parameters
+
+##### data
+
+[`Block`](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/block/docs/classes/Block.md)
+
+##### resolve?
+
+(`result?`) => `void`
+
+#### Returns
+
+`void`
+
+***
+
+### beforeTx
+
+> **beforeTx**: (`data`, `resolve?`) => `void`
+
+Defined in: [vm/src/types.ts:90](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L90)
+
+#### Parameters
+
+##### data
+
+`TypedTransaction`
+
+##### resolve?
+
+(`result?`) => `void`
+
+#### Returns
+
+`void`

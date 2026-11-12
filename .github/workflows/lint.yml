@@ -1,0 +1,33 @@
+name: Lint
+on:
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-lint
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      # TODO(typescript-7): typescript-eslint has no TypeScript 7 compatible
+      # release yet — its type-aware parser crashes against the TS 7 compiler
+      # API. Keep lint non-blocking until upstream ships TS 7 support, then
+      # remove `continue-on-error`.
+      - run: npm run lint
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}

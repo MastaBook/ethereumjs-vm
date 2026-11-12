@@ -1,9 +1,0 @@
-{
-  "extends": "@ethereumjs/config-typescript/tsconfig.prod.json",
-  "compilerOptions": {
-    "outDir": "./dist",
-    "types": ["node"],
-    "typeRoots": ["node_modules/@types"]
-  },
-  "include": ["src/**/*.ts"]
-}

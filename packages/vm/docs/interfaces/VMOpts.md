@@ -1,0 +1,151 @@
+[**@ethereumjs/vm**](../README.md)
+
+***
+
+[@ethereumjs/vm](../README.md) / VMOpts
+
+# Interface: VMOpts
+
+Defined in: [vm/src/types.ts:104](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L104)
+
+Options for instantiating a [VM](../classes/VM.md).
+
+## Properties
+
+### activatePrecompiles?
+
+> `optional` **activatePrecompiles?**: `boolean`
+
+Defined in: [vm/src/types.ts:148](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L148)
+
+If true, create entries in the state tree for the precompiled contracts, saving some gas the
+first time each of them is called.
+
+If this parameter is false, each call to each of them has to pay an extra 25000 gas
+for creating the account. If the account is still empty after this call, it will be deleted,
+such that this extra cost has to be paid again.
+
+Setting this to true has the effect of precompiled contracts' gas costs matching mainnet's from
+the very first call, which is intended for testing networks.
+
+Default: `false`
+
+***
+
+### blockchain?
+
+> `optional` **blockchain?**: `EVMMockBlockchainInterface`
+
+Defined in: [vm/src/types.ts:134](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L134)
+
+A [@ethereumjs/blockchain!Blockchain](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/blockchain/docs/classes/Blockchain.md) object for storing/retrieving blocks
+
+***
+
+### common?
+
+> `optional` **common?**: [`Common`](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common/docs/classes/Common.md)
+
+Defined in: [vm/src/types.ts:126](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L126)
+
+Use a [@ethereumjs/common!Common](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common/docs/classes/Common.md) instance
+if you want to change the chain setup.
+
+### Possible Values
+
+- `chain`: all chains supported by `Common` or a custom chain
+- `hardfork`: `mainnet` hardforks up to the `Paris` hardfork
+- `eips`: `2537` (usage e.g. `eips: [ 2537, ]`)
+
+Note: check the associated `@ethereumjs/evm` instance options
+documentation for supported EIPs.
+
+### Default Setup
+
+Default setup if no `Common` instance is provided:
+
+- `chain`: `mainnet`
+- `hardfork`: `paris`
+- `eips`: `[]`
+
+***
+
+### evm?
+
+> `optional` **evm?**: `EVMInterface`
+
+Defined in: [vm/src/types.ts:181](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L181)
+
+Use a custom EVM to run Messages on. If this is not present, use the default EVM.
+
+***
+
+### evmOpts?
+
+> `optional` **evmOpts?**: `EVMOpts`
+
+Defined in: [vm/src/types.ts:189](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L189)
+
+Often there is no need to provide a full custom EVM but only a few options need to be
+adopted. This option allows to provide a custom set of EVM options to be passed.
+
+Note: This option will throw if used in conjunction with a full custom EVM passed.
+
+***
+
+### params?
+
+> `optional` **params?**: `ParamsDict`
+
+Defined in: [vm/src/types.ts:176](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L176)
+
+VM parameters sorted by EIP can be found in the exported `paramsVM` dictionary,
+which is internally passed to the associated `@ethereumjs/common` instance which
+manages parameter selection based on the hardfork and EIP settings.
+
+This option allows providing a custom set of parameters. Note that parameters
+get fully overwritten, so you need to extend the default parameter dict
+to provide the full parameter set.
+
+It is recommended to deep-clone the params object for this to avoid side effects:
+
+```ts
+const params = JSON.parse(JSON.stringify(paramsVM))
+params['1559']['elasticityMultiplier'] = 10 // 2
+```
+
+***
+
+### profilerOpts?
+
+> `optional` **profilerOpts?**: [`VMProfilerOpts`](../type-aliases/VMProfilerOpts.md)
+
+Defined in: [vm/src/types.ts:194](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L194)
+
+Optional VM performance profiler settings (mutually exclusive report targets).
+
+***
+
+### setHardfork?
+
+> `optional` **setHardfork?**: `boolean` \| `BigIntLike`
+
+Defined in: [vm/src/types.ts:159](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L159)
+
+Set the hardfork either by timestamp (for HFs from Shanghai onwards) or by block number
+for older Hfs.
+
+Additionally it is possible to pass in a specific TD value to support live-Merge-HF
+transitions. Note that this should only be needed in very rare and specific scenarios.
+
+Default: `false` (HF is set to whatever default HF is set by the [@ethereumjs/common!Common](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common/docs/classes/Common.md) instance)
+
+***
+
+### stateManager?
+
+> `optional` **stateManager?**: [`StateManagerInterface`](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common/docs/interfaces/StateManagerInterface.md)
+
+Defined in: [vm/src/types.ts:130](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/src/types.ts#L130)
+
+A [@ethereumjs/common!StateManagerInterface](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/common/docs/interfaces/StateManagerInterface.md) implementation to use as the state store

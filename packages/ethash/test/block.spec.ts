@@ -1,28 +1,45 @@
-import tape from 'tape'
-import { Block } from '@ethereumjs/block'
-import Ethash from '../src'
-const level = require('level-mem')
+import { createBlock, createBlockFromBytesArray, createBlockFromRLP } from '@ethereumjs/block'
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+import { RLP } from '@ethereumjs/rlp'
+import { MapDB, hexToBytes } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
 
-const cacheDB = level()
+import { Ethash } from '../src/index.ts'
 
-const { validBlockRlp, invalidBlockRlp } = require('./ethash_block_rlp_tests.json')
+import { blockTestsData } from './block_tests_data.ts'
+import { invalidBlockRLP, validBlockRLP } from './ethash_block_rlp_tests.ts'
 
-tape('Verify POW for valid and invalid blocks', async function (t) {
-  const e = new Ethash(cacheDB)
+import type { BlockBytes } from '@ethereumjs/block'
+import type { PrefixedHexString } from '@ethereumjs/util'
 
-  const genesis = Block.genesis()
-  const genesisResult = await e.verifyPOW(genesis)
-  t.ok(genesisResult, 'genesis block should be valid')
+const cacheDB = new MapDB()
 
-  const validRlp = Buffer.from(validBlockRlp, 'hex')
-  const validBlock = Block.fromRLPSerializedBlock(validRlp)
-  const validBlockResult = await e.verifyPOW(validBlock)
-  t.ok(validBlockResult, 'should be valid')
+describe('[Ethash]: verify PoW on blocks', () => {
+  it('accepts valid PoW blocks and rejects invalid RLP fixtures', async () => {
+    const e = new Ethash(cacheDB as any)
 
-  const invalidRlp = Buffer.from(invalidBlockRlp, 'hex')
-  const invalidBlock = Block.fromRLPSerializedBlock(invalidRlp)
-  const invalidBlockResult = await e.verifyPOW(invalidBlock)
-  t.ok(!invalidBlockResult, 'should be invalid')
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.Istanbul })
 
-  t.end()
+    const genesis = createBlock({}, { common })
+    const genesisResult = await e.verifyPOW(genesis)
+    assert.isTrue(genesisResult, 'genesis block should be valid')
+
+    const validRlp = hexToBytes(validBlockRLP)
+    const validBlock = createBlockFromRLP(validRlp, { common })
+    const validBlockResult = await e.verifyPOW(validBlock)
+    assert.isTrue(validBlockResult, 'should be valid')
+
+    const invalidRlp = hexToBytes(invalidBlockRLP)
+    // Put correct amount of extraData in block extraData field so block can be deserialized
+    const values = RLP.decode(Uint8Array.from(invalidRlp)) as BlockBytes
+    values[0][12] = new Uint8Array(32)
+    const invalidBlock = createBlockFromBytesArray(values, { common })
+    const invalidBlockResult = await e.verifyPOW(invalidBlock)
+    assert.isFalse(invalidBlockResult, 'should be invalid')
+
+    const blockRlp = hexToBytes(blockTestsData.blocks[0].rlp as PrefixedHexString)
+    const block = createBlockFromRLP(blockRlp, { common })
+    const uncleBlockResult = await e.verifyPOW(block)
+    assert.isTrue(uncleBlockResult, 'should be valid')
+  })
 })

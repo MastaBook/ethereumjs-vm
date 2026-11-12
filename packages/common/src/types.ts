@@ -1,64 +1,111 @@
-import { BN } from 'ethereumjs-util'
+import type { BigIntLike, KZG, PrefixedHexString } from '@ethereumjs/util'
+import type { secp256k1 } from '@noble/curves/secp256k1.js'
+import type { ConsensusAlgorithm, ConsensusType, Hardfork } from './enums.ts'
 
-export interface genesisStatesType {
-  names: {
-    [key: string]: string
-  }
-  [key: string]: {}
+/** Map of chain IDs to human-readable chain names. */
+export interface ChainName {
+  [chainId: string]: string
+}
+/** Registry of chain configs and name aliases. */
+export interface ChainsConfig {
+  [key: string]: ChainConfig | ChainName
 }
 
-export interface chainsType {
-  names: {
-    [key: string]: string
-  }
-  [key: string]: any
+/** Event map for {@link Common} hardfork change notifications. */
+export interface CommonEvent {
+  hardforkChanged: [hardfork: string]
 }
 
-export interface Chain {
+/** Clique proof-of-authority consensus parameters. */
+export type CliqueConfig = {
+  period: number
+  epoch: number
+}
+
+/** Ethash consensus parameters (currently empty). */
+export type EthashConfig = {}
+
+/** Casper consensus parameters (currently empty). */
+export type CasperConfig = {}
+
+type ConsensusConfig = {
+  type: ConsensusType | string
+  algorithm: ConsensusAlgorithm | string
+  clique?: CliqueConfig
+  ethash?: EthashConfig
+  casper?: CasperConfig
+}
+
+/** Full chain specification consumed by {@link Common}. */
+export interface ChainConfig {
   name: string
-  chainId: number | BN
-  networkId: number | BN
-  // TODO: make mandatory in next breaking release
+  chainId: number | string
   defaultHardfork?: string
-  comment: string
-  url: string
-  genesis: GenesisBlock
-  hardforks: Hardfork[]
-  bootstrapNodes: BootstrapNode[]
+  comment?: string
+  url?: string
+  genesis: GenesisBlockConfig
+  hardforks: HardforkTransitionConfig[]
+  customHardforks?: HardforksDict
+  bootstrapNodes: BootstrapNodeConfig[]
   dnsNetworks?: string[]
-  // TODO: make mandatory in next breaking release
-  consensus?: {
-    type: string
-    algorithm: string
-    clique?: {
-      period: number
-      epoch: number
-    }
-    ethash?: any
-  }
+  consensus: ConsensusConfig
+  depositContractAddress?: PrefixedHexString
+  /** Ethereum consensus light-client parameters (Beacon Chain), when supported */
+  beaconLightClient?: BeaconLightClientConfig
 }
 
-export interface eipsType {
-  [key: number]: any
-}
-
-export interface GenesisBlock {
-  hash: string
-  timestamp: string | null
-  gasLimit: number
-  difficulty: number
-  nonce: string
-  extraData: string
-  stateRoot: string
-}
-
-export interface Hardfork {
+/** Consensus fork row for Beacon light-client domain and proof layout */
+export interface BeaconForkScheduleEntry {
+  /** Consensus fork name (`phase0`, `altair`, `bellatrix`, `capella`, `deneb`, `electra`, `osaka`, …) */
   name: string
-  block: number | null
-  forkHash?: string | null
+  /** Activation epoch on the Beacon Chain */
+  epoch: number
+  /** 4-byte fork version hex (e.g. `0x90000070`) */
+  version: PrefixedHexString
 }
 
-export interface BootstrapNode {
+/** Beacon Chain metadata for Altair+ light-client verification */
+export interface BeaconLightClientConfig {
+  /** Genesis time (unix seconds) of the Beacon Chain */
+  genesisTime: number
+  /** 32-byte `genesis_validators_root` hex */
+  genesisValidatorsRoot: PrefixedHexString
+  /** Seconds per slot (12 on Mainnet and standard testnets) */
+  secondsPerSlot: number
+  /** Slots per epoch (32) */
+  slotsPerEpoch: number
+  /** Epochs per sync committee period (256) */
+  epochsPerSyncCommitteePeriod: number
+  /** Consensus fork version schedule for `forkVersionAtEpoch` / sync committee domain */
+  forks: BeaconForkScheduleEntry[]
+  /** Default untrusted Beacon REST endpoints (multi-provider fallback in WP-05b) */
+  defaultEndpoints: string[]
+  /** Optional weak-subjectivity checkpoint block root hex */
+  defaultCheckpointRoot?: PrefixedHexString
+}
+
+/** Genesis block header fields for a chain config. */
+export interface GenesisBlockConfig {
+  timestamp?: PrefixedHexString
+  gasLimit: number | PrefixedHexString
+  difficulty: number | PrefixedHexString
+  nonce: PrefixedHexString
+  extraData: PrefixedHexString
+  baseFeePerGas?: PrefixedHexString
+  excessBlobGas?: PrefixedHexString
+  requestsHash?: PrefixedHexString
+}
+
+/** Block or timestamp at which a hardfork activates. */
+export interface HardforkTransitionConfig {
+  name: Hardfork | string
+  block: number | null // null is used for hardforks that should not be applied -- since `undefined` isn't a valid value in JSON
+  timestamp?: number | string
+  forkHash?: PrefixedHexString | null
+}
+
+/** ENR/bootstrap node entry for a chain config. */
+export interface BootstrapNodeConfig {
   ip: string
   port: number | string
   network?: string
@@ -66,4 +113,150 @@ export interface BootstrapNode {
   id: string
   location: string
   comment: string
+}
+
+/** CustomCrypto type. */
+export interface CustomCrypto {
+  /**
+   * Interface for providing custom cryptographic primitives in place of `ethereum-cryptography` variants
+   */
+  keccak256?: (msg: Uint8Array) => Uint8Array
+  ecrecover?: (
+    msgHash: Uint8Array,
+    v: bigint,
+    r: Uint8Array,
+    s: Uint8Array,
+    chainId?: bigint,
+  ) => Uint8Array
+  sha256?: (msg: Uint8Array) => Uint8Array
+  ecsign?: typeof secp256k1.sign
+  ecdsaRecover?: (sig: Uint8Array, recId: number, hash: Uint8Array) => Uint8Array
+  kzg?: KZG
+}
+
+/** BaseOpts type. */
+export interface BaseOpts {
+  /**
+   * String identifier ('byzantium') for hardfork or {@link Hardfork} enum.
+   *
+   * Default: Hardfork.London
+   */
+  hardfork?: string | Hardfork
+  /**
+   * Selected EIPs which can be activated, please use an array for instantiation
+   * (e.g. `eips: [ 2537, ]`)
+   *
+   * Currently supported:
+   *
+   * - [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537) - BLS12-381 precompiles
+   */
+  eips?: number[]
+  /**
+   * Optionally pass in an EIP params dictionary, see one of the
+   * EthereumJS library `params.ts` files for an example (e.g. tx, evm).
+   * By default parameters are set by the respective library, so this
+   * is only relevant if you want to use EthereumJS libraries with a
+   * custom parameter set.
+   *
+   * Example Format:
+   *
+   * ```ts
+   * {
+   *   1559: {
+   *     initialBaseFee: 1000000000,
+   *   }
+   * }
+   * ```
+   */
+  params?: ParamsDict
+  /**
+   * This option can be used to replace the most common crypto primitives
+   * (keccak256 hashing e.g.) within the EthereumJS ecosystem libraries
+   * with alternative implementations (e.g. more performant WASM libraries).
+   *
+   * Note: please be aware that this is adding new dependencies for your
+   * system setup to be used for sensitive/core parts of the functionality
+   * and a choice on the libraries to add should be handled with care
+   * and be made with eventual security implications considered.
+   */
+  customCrypto?: CustomCrypto
+}
+
+/**
+ * Options for instantiating a {@link Common} instance.
+ */
+export interface CommonOpts extends BaseOpts {
+  /**
+   * The chain configuration to be used. There are available configuration object for mainnet
+   * (`Mainnet`) and the currently active testnets which can be directly used.
+   */
+  chain: ChainConfig
+}
+
+/** Options when constructing {@link Common} from a geth genesis file. */
+export interface GethConfigOpts extends BaseOpts {
+  chain?: string
+  genesisHash?: Uint8Array
+}
+
+/** Block number or timestamp used to select a hardfork. */
+export interface HardforkByOpts {
+  blockNumber?: BigIntLike
+  timestamp?: BigIntLike
+}
+
+/** Minimum hardfork and prerequisite EIPs for activating one EIP. */
+export type EIPConfig = {
+  /**
+   * Earliest hardfork where this EIP can be activated in isolation, i.e. the
+   * fork that already provides its prerequisites. This is **not** the hardfork
+   * that schedules the EIP (that list lives on `HardforkConfig.eips`). It is
+   * therefore at least one hardfork before the scheduling fork.
+   */
+  minimumHardfork: Hardfork
+  requiredEIPs?: number[]
+  /**
+   * EIPs whose behaviour this EIP replaces when both would be active. Used by
+   * {@link resolveEIPs} for documentation and optional validation only.
+   */
+  supersedes?: number[]
+  /**
+   * EIPs that cannot be activated together with this one. Checked in
+   * {@link Common.setEIPs} and {@link resolveEIPs}.
+   */
+  conflictsWith?: number[]
+}
+
+/** Hardfork parameter key/value map. */
+export type ParamsConfig = {
+  [key: string]: number | string | null
+}
+
+/** Hardfork-specific EIP and parameter overrides. */
+export type HardforkConfig = {
+  eips?: number[]
+  consensus?: ConsensusConfig
+  params?: ParamsConfig
+}
+
+/** Dictionary of EIP metadata keyed by EIP number. */
+export type EIPsDict = {
+  [key: string]: EIPConfig
+}
+
+/** Dictionary of parameter sets keyed by identifier. */
+export type ParamsDict = {
+  [key: string]: ParamsConfig
+}
+
+/** Dictionary of hardfork configs keyed by name. */
+export type HardforksDict = {
+  [key: string]: HardforkConfig
+}
+
+/** Blob gas schedule parameters for a blob-parameter-only fork. */
+export type BpoSchedule = {
+  targetBlobGasPerBlock: bigint
+  maxBlobGasPerBlock: bigint
+  blobGasPriceUpdateFraction: bigint
 }

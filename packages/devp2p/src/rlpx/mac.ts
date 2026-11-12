@@ -1,34 +1,39 @@
-import { createCipheriv } from 'crypto'
-import createKeccakHash from 'keccak'
-import { xor } from '../util'
+import { type Cipher, createCipheriv } from 'crypto'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+
+import { utf8ToBytes } from '@ethereumjs/util'
+import { xor } from '../util.ts'
+
+type Hash = ReturnType<typeof keccak_256.create>
 
 export class MAC {
-  _hash: any
-  _secret: Buffer
-  constructor(secret: Buffer) {
-    this._hash = createKeccakHash('keccak256')
+  protected _hash: Hash
+  protected _secret: Uint8Array
+  protected _aes: Cipher
+  constructor(secret: Uint8Array) {
+    this._hash = keccak_256.create()
     this._secret = secret
+    this._aes = createCipheriv('aes-256-ecb', this._secret, '')
+    this._aes.setAutoPadding(false)
   }
 
-  update(data: Buffer | string) {
-    this._hash.update(data)
+  update(data: Uint8Array | string) {
+    this._hash.update(typeof data === 'string' ? utf8ToBytes(data) : data)
   }
 
-  updateHeader(data: Buffer | string) {
-    const aes = createCipheriv('aes-256-ecb', this._secret, '')
-    const encrypted = aes.update(this.digest())
+  updateHeader(data: Uint8Array | string) {
+    const encrypted = this._aes.update(this.digest())
     this._hash.update(xor(encrypted, data))
   }
 
-  updateBody(data: Buffer | string) {
-    this._hash.update(data)
+  updateBody(data: Uint8Array | string) {
+    this._hash.update(typeof data === 'string' ? utf8ToBytes(data) : data)
     const prev = this.digest()
-    const aes = createCipheriv('aes-256-ecb', this._secret, '')
-    const encrypted = aes.update(prev)
+    const encrypted = this._aes.update(prev)
     this._hash.update(xor(encrypted, prev))
   }
 
   digest() {
-    return this._hash._clone().digest().slice(0, 16)
+    return Uint8Array.from(this._hash.clone().digest().subarray(0, 16))
   }
 }

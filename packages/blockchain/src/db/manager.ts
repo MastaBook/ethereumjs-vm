@@ -1,20 +1,22 @@
-import * as rlp from 'rlp'
-import { Address, BN } from 'ethereumjs-util'
+import { createBlockFromBytesArray, createBlockHeaderFromBytesArray } from '@ethereumjs/block'
+import { RLP } from '@ethereumjs/rlp'
 import {
-  Block,
-  BlockHeader,
-  BlockBuffer,
-  BlockHeaderBuffer,
-  BlockBodyBuffer,
-} from '@ethereumjs/block'
-import Common from '@ethereumjs/common'
-import Cache from './cache'
-import { DatabaseKey, DBOp, DBTarget, DBOpData } from './operation'
+  EthereumJSErrorWithoutCode,
+  KECCAK256_RLP,
+  KECCAK256_RLP_ARRAY,
+  bytesToBigInt,
+  bytesToHex,
+  equalsBytes,
+  unprefixedHexToBytes,
+} from '@ethereumjs/util'
 
-import type { LevelUp } from 'levelup'
-import { CliqueLatestSignerStates, CliqueLatestVotes, CliqueLatestBlockSigners } from '../clique'
+import { Cache } from './cache.ts'
+import { DBOp, DBTarget } from './operation.ts'
 
-const level = require('level-mem')
+import type { Block, BlockBodyBytes, BlockBytes, BlockOptions } from '@ethereumjs/block'
+import type { Common } from '@ethereumjs/common'
+import type { BatchDBOp, DB, DBObject, DelBatch, PutBatch } from '@ethereumjs/util'
+import type { DatabaseKey } from './operation.ts'
 
 /**
  * @hidden
@@ -25,7 +27,7 @@ export interface GetOpts {
   cache?: string
 }
 
-export type CacheMap = { [key: string]: Cache<Buffer> }
+export type CacheMap = { [key: string]: Cache<Uint8Array> }
 
 /**
  * Abstraction over a DB to facilitate storing/fetching blockchain-related
@@ -34,12 +36,12 @@ export type CacheMap = { [key: string]: Cache<Buffer> }
  */
 export class DBManager {
   private _cache: CacheMap
-  private _common: Common
-  private _db: LevelUp
+  public readonly common: Common
+  private _db: DB<Uint8Array | string, Uint8Array | string | DBObject>
 
-  constructor(db: LevelUp, common: Common) {
+  constructor(db: DB<Uint8Array | string, Uint8Array | string | DBObject>, common: Common) {
     this._db = db
-    this._common = common
+    this.common = common
     this._cache = {
       td: new Cache({ max: 1024 }),
       header: new Cache({ max: 512 }),
@@ -52,167 +54,134 @@ export class DBManager {
   /**
    * Fetches iterator heads from the db.
    */
-  async getHeads(): Promise<{ [key: string]: Buffer }> {
-    const heads = await this.get(DBTarget.Heads)
-    Object.keys(heads).forEach((key) => {
-      heads[key] = Buffer.from(heads[key])
-    })
-    return heads
+  async getHeads(): Promise<{ [key: string]: Uint8Array }> {
+    const heads = (await this.get(DBTarget.Heads)) as DBObject
+    if (heads === undefined) return heads
+    const decodedHeads: { [key: string]: Uint8Array } = {}
+    for (const key of Object.keys(heads)) {
+      // Heads are stored in DB as hex strings since Level converts Uint8Arrays
+      // to nested JSON objects when they are included in a value being stored
+      // in the DB
+      decodedHeads[key] = unprefixedHexToBytes(heads[key] as string)
+    }
+    return decodedHeads
   }
 
   /**
    * Fetches header of the head block.
    */
-  async getHeadHeader(): Promise<Buffer> {
+  async getHeadHeader(): Promise<Uint8Array | undefined> {
     return this.get(DBTarget.HeadHeader)
   }
 
   /**
    * Fetches head block.
    */
-  async getHeadBlock(): Promise<Buffer> {
+  async getHeadBlock(): Promise<Uint8Array | undefined> {
     return this.get(DBTarget.HeadBlock)
-  }
-
-  /**
-   * Fetches clique signers.
-   */
-  async getCliqueLatestSignerStates(): Promise<CliqueLatestSignerStates> {
-    try {
-      const signerStates = await this.get(DBTarget.CliqueSignerStates)
-      const states = (<any>rlp.decode(signerStates)) as [Buffer, Buffer[]]
-      return states.map((state) => {
-        const blockNum = new BN(state[0])
-        const addrs = (<any>state[1]).map((buf: Buffer) => new Address(buf))
-        return [blockNum, addrs]
-      }) as CliqueLatestSignerStates
-    } catch (error) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Fetches clique votes.
-   */
-  async getCliqueLatestVotes(): Promise<CliqueLatestVotes> {
-    try {
-      const signerVotes = await this.get(DBTarget.CliqueVotes)
-      const votes = (<any>rlp.decode(signerVotes)) as [Buffer, [Buffer, Buffer, Buffer]]
-      return votes.map((vote) => {
-        const blockNum = new BN(vote[0])
-        const signer = new Address((vote[1] as any)[0])
-        const beneficiary = new Address((vote[1] as any)[1])
-        const nonce = (vote[1] as any)[2]
-        return [blockNum, [signer, beneficiary, nonce]]
-      }) as CliqueLatestVotes
-    } catch (error) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Fetches snapshot of clique signers.
-   */
-  async getCliqueLatestBlockSigners(): Promise<CliqueLatestBlockSigners> {
-    try {
-      const blockSigners = await this.get(DBTarget.CliqueBlockSigners)
-      const signers = (<any>rlp.decode(blockSigners)) as [Buffer, Buffer][]
-      return signers.map((s) => {
-        const blockNum = new BN(s[0])
-        const signer = new Address(s[1] as any)
-        return [blockNum, signer]
-      }) as CliqueLatestBlockSigners
-    } catch (error) {
-      if (error.type === 'NotFoundError') {
-        return []
-      }
-      throw error
-    }
   }
 
   /**
    * Fetches a block (header and body) given a block id,
    * which can be either its hash or its number.
    */
-  async getBlock(blockId: Buffer | BN | number): Promise<Block> {
+  async getBlock(blockId: Uint8Array | bigint | number): Promise<Block | undefined> {
     if (typeof blockId === 'number' && Number.isInteger(blockId)) {
-      blockId = new BN(blockId)
+      blockId = BigInt(blockId)
     }
 
     let number
     let hash
-    if (Buffer.isBuffer(blockId)) {
+    if (blockId === undefined) return undefined
+    if (blockId instanceof Uint8Array) {
       hash = blockId
       number = await this.hashToNumber(blockId)
-    } else if (BN.isBN(blockId)) {
+    } else if (typeof blockId === 'bigint') {
       number = blockId
       hash = await this.numberToHash(blockId)
     } else {
-      throw new Error('Unknown blockId type')
+      throw EthereumJSErrorWithoutCode('Unknown blockId type')
     }
 
-    const header: BlockHeaderBuffer = (await this.getHeader(hash, number)).raw()
-    let body: BlockBodyBuffer = [[], []]
-    try {
-      body = await this.getBody(hash, number)
-    } catch (error) {
-      if (error.type !== 'NotFoundError') {
-        throw error
+    if (hash === undefined || number === undefined) return undefined
+    const header = await this.getHeader(hash, number)
+    let body = await this.getBody(hash, number)
+
+    // be backward compatible where we didn't use to store a body with no txs, uncles, withdrawals
+    // otherwise the body is never partially stored and if we have some body, its in entirety
+    if (body === undefined) {
+      body = [[], []] as BlockBodyBytes
+      // Do extra validations on the header since we are assuming empty transactions and uncles
+      if (!equalsBytes(header.transactionsTrie, KECCAK256_RLP)) {
+        throw EthereumJSErrorWithoutCode('transactionsTrie root should be equal to hash of null')
+      }
+
+      if (!equalsBytes(header.uncleHash, KECCAK256_RLP_ARRAY)) {
+        throw EthereumJSErrorWithoutCode('uncle hash should be equal to hash of empty array')
+      }
+
+      // If this block had empty withdrawals push an empty array in body
+      if (header.withdrawalsRoot !== undefined) {
+        // Do extra validations for withdrawal before assuming empty withdrawals
+        if (!equalsBytes(header.withdrawalsRoot, KECCAK256_RLP)) {
+          throw EthereumJSErrorWithoutCode(
+            'withdrawals root shoot be equal to hash of null when no withdrawals',
+          )
+        } else {
+          body.push([])
+        }
       }
     }
-    const blockData = [header, ...body] as BlockBuffer
-    const opts = { common: this._common, hardforkByBlockNumber: true }
-    return Block.fromValuesArray(blockData, opts)
+
+    const blockData = [header.raw(), ...body] as BlockBytes
+    const opts: BlockOptions = { common: this.common, setHardfork: true }
+    return createBlockFromBytesArray(blockData, opts)
   }
 
   /**
    * Fetches body of a block given its hash and number.
    */
-  async getBody(blockHash: Buffer, blockNumber: BN): Promise<BlockBodyBuffer> {
+  async getBody(blockHash: Uint8Array, blockNumber: bigint): Promise<BlockBodyBytes | undefined> {
     const body = await this.get(DBTarget.Body, { blockHash, blockNumber })
-    return (rlp.decode(body) as any) as BlockBodyBuffer
+    return body !== undefined ? (RLP.decode(body) as BlockBodyBytes) : undefined
   }
 
   /**
    * Fetches header of a block given its hash and number.
    */
-  async getHeader(blockHash: Buffer, blockNumber: BN) {
+  async getHeader(blockHash: Uint8Array, blockNumber: bigint) {
     const encodedHeader = await this.get(DBTarget.Header, { blockHash, blockNumber })
-    const opts = { common: this._common, hardforkByBlockNumber: true }
-    return BlockHeader.fromRLPSerializedHeader(encodedHeader, opts)
+    const headerValues = RLP.decode(encodedHeader)
+
+    const opts: BlockOptions = { common: this.common, setHardfork: true }
+    return createBlockHeaderFromBytesArray(headerValues as Uint8Array[], opts)
   }
 
   /**
    * Fetches total difficulty for a block given its hash and number.
    */
-  async getTotalDifficulty(blockHash: Buffer, blockNumber: BN): Promise<BN> {
+  async getTotalDifficulty(blockHash: Uint8Array, blockNumber: bigint): Promise<bigint> {
     const td = await this.get(DBTarget.TotalDifficulty, { blockHash, blockNumber })
-    return new BN(rlp.decode(td))
+    return bytesToBigInt(RLP.decode(td) as Uint8Array)
   }
 
   /**
    * Performs a block hash to block number lookup.
    */
-  async hashToNumber(blockHash: Buffer): Promise<BN> {
+  async hashToNumber(blockHash: Uint8Array): Promise<bigint | undefined> {
     const value = await this.get(DBTarget.HashToNumber, { blockHash })
-    return new BN(value)
+    if (value === undefined) {
+      throw EthereumJSErrorWithoutCode(`value for ${bytesToHex(blockHash)} not found in DB`)
+    }
+    return value !== undefined ? bytesToBigInt(value) : undefined
   }
 
   /**
    * Performs a block number to block hash lookup.
    */
-  async numberToHash(blockNumber: BN): Promise<Buffer> {
-    if (blockNumber.ltn(0)) {
-      throw new level.errors.NotFoundError()
-    }
-
-    return this.get(DBTarget.NumberToHash, { blockNumber })
+  async numberToHash(blockNumber: bigint): Promise<Uint8Array | undefined> {
+    const value = await this.get(DBTarget.NumberToHash, { blockNumber })
+    return value
   }
 
   /**
@@ -225,33 +194,50 @@ export class DBManager {
 
     const cacheString = dbGetOperation.cacheString
     const dbKey = dbGetOperation.baseDBOp.key
-    const dbOpts = dbGetOperation.baseDBOp
 
-    if (cacheString) {
-      if (!this._cache[cacheString]) {
-        throw new Error(`Invalid cache: ${cacheString}`)
+    if (cacheString !== undefined) {
+      if (this._cache[cacheString] === undefined) {
+        throw EthereumJSErrorWithoutCode(`Invalid cache: ${cacheString}`)
       }
-
       let value = this._cache[cacheString].get(dbKey)
-      if (!value) {
-        value = <Buffer>await this._db.get(dbKey, dbOpts)
-        this._cache[cacheString].set(dbKey, value)
+      if (value === undefined) {
+        value = (await this._db.get(dbKey, {
+          keyEncoding: dbGetOperation.baseDBOp.keyEncoding,
+          valueEncoding: dbGetOperation.baseDBOp.valueEncoding,
+        })) as Uint8Array | undefined
+        if (value !== undefined) {
+          this._cache[cacheString].set(dbKey, value)
+        }
       }
 
       return value
     }
-
-    return this._db.get(dbKey, dbOpts)
+    return this._db.get(dbKey, {
+      keyEncoding: dbGetOperation.baseDBOp.keyEncoding,
+      valueEncoding: dbGetOperation.baseDBOp.valueEncoding,
+    })
   }
 
   /**
    * Performs a batch operation on db.
    */
   async batch(ops: DBOp[]) {
-    const convertedOps: DBOpData[] = ops.map((op) => op.baseDBOp)
+    const convertedOps: BatchDBOp[] = ops.map((op) => {
+      const type = op.baseDBOp.type ?? (op.baseDBOp.value !== undefined ? 'put' : 'del')
+      const convertedOp = {
+        key: op.baseDBOp.key,
+        value: op.baseDBOp.value,
+        type,
+        opts: {
+          keyEncoding: op.baseDBOp.keyEncoding,
+          valueEncoding: op.baseDBOp.valueEncoding,
+        },
+      }
+      if (type === 'put') return convertedOp as PutBatch
+      else return convertedOp as DelBatch
+    })
     // update the current cache for each operation
     ops.map((op) => op.updateCache(this._cache))
-
-    return this._db.batch(convertedOps as any)
+    return this._db.batch(convertedOps)
   }
 }

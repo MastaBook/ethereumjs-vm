@@ -1,0 +1,328 @@
+# EthereumJS — Developer Docs
+
+**How we work in this monorepo** — setup, conventions, tooling, releases, and where each procedure is written down.
+
+| | |
+| --- | --- |
+| **Humans** | Start here. Use the tables below as an index; follow links for depth. |
+| **Coding agents** | Start at [AGENTS.md](./AGENTS.md), then the [Cursor rules](#agent-and-cursor-rules) it lists. |
+
+> **One source of truth.** If you change CI, releases, docs, or conventions, update the **canonical file** in the same PR. Do not invent a parallel procedure.
+
+## Contents
+
+- [Sources of truth](#sources-of-truth)
+- [Get running](#get-running)
+- [Conventions](#conventions)
+- [Tooling](#tooling)
+- [Releases](#releases)
+- [Occasional tasks](#occasional-tasks)
+- [Agent and Cursor rules](#agent-and-cursor-rules)
+- [Further reading](#further-reading)
+
+---
+
+## Sources of truth
+
+### Documentation and architecture
+
+| Topic | Where |
+| ----- | ----- |
+| Monorepo landing, package map | [README.md](./README.md) |
+| Package graph, execution flow | [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| Public API JSDoc | [api-docs.mdc](.cursor/rules/api-docs.mdc) |
+| Examples and embedme | [examples.mdc](.cursor/rules/examples.mdc) |
+| npm releases and CHANGELOG | [release-round skill](.cursor/skills/release-round/SKILL.md), invariants in [releases.mdc](.cursor/rules/releases.mdc) |
+
+### Code patterns
+
+| Topic | Where |
+| ----- | ----- |
+| Naming, `createX`, options, `.ts` imports | [code-conventions.mdc](.cursor/rules/code-conventions.mdc) |
+| File layout, EIP params, errors (overview) | [§ Conventions](#conventions) below |
+
+### Quality, CI, and security
+
+| Topic | Where |
+| ----- | ----- |
+| CI job budget, affected packages | [ci.mdc](.cursor/rules/ci.mdc), [ci-affected.mjs](./scripts/ci-affected.mjs) |
+| Typecheck finish steps | [typecheck.mdc](.cursor/rules/typecheck.mdc) |
+| Spellcheck finish steps | [spellcheck.mdc](.cursor/rules/spellcheck.mdc) |
+| Security trust tiers | [security.mdc](.cursor/rules/security.mdc) |
+| API tests (Vitest) | [api-tests.mdc](.cursor/rules/api-tests.mdc) |
+
+### Package-specific
+
+| Topic | Where |
+| ----- | ----- |
+| VM consensus fixtures, profiling | [packages/vm/DEVELOPER.md](./packages/vm/DEVELOPER.md) |
+| Archived execution client (Hive notes) | [archive/client/DEVELOPER.md](./archive/client/DEVELOPER.md) |
+| EST fixture bumps | [update-est-fixtures skill](.cursor/skills/update-est-fixtures/SKILL.md) |
+
+---
+
+## Get running
+
+### Layout
+
+[npm workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces) link all packages.
+
+```
+ethereumjs-monorepo/
+├── packages/          @ethereumjs/* libraries
+├── config/            shared TS, ESLint, cspell, TypeDoc, legacy-ethereum-tests pin
+└── packages/vm/test/consensus/      EST manifest + consensus runner (see VM DEVELOPER.md)
+```
+
+Package scripts call helpers under [`config/cli/`](./config/cli/) (`ts-compile.sh`, `ts-build.sh`, `coverage.sh`, `typedoc.sh`, …). See that directory for the full set.
+
+### Clone and install
+
+```sh
+git clone https://github.com/ethereumjs/ethereumjs-monorepo.git
+cd ethereumjs-monorepo
+npm install
+```
+
+Official **TransactionTests** and legacy **BlockchainTests** from [ethereum/tests](https://github.com/ethereum/tests) are not in git. They are sparse-fetched on demand into `~/.cache/ethereumjs/legacy-ethereum-tests/` (override with `LEGACY_ETHEREUM_TESTS_CACHE`):
+
+```sh
+npm run legacy-tests:fetch -- transaction   # packages/tx official runner (~41 MB)
+npm run legacy-tests:fetch -- blockchain    # VM --source legacy (~985 MB)
+```
+
+Block difficulty vectors are vendored under `packages/block/test/testdata/difficulty/`.
+
+Published packages require **Node.js 22** or newer. Use **Node.js 26** locally (matches CI). With [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm), run `nvm use` / `fnm use` in the repo root — `.nvmrc` pins that version.
+
+### Commands at a glance
+
+**Repo root**
+
+| Command | What it does |
+| ------- | ------------ |
+| `npm run lint` / `lint:fix` | ESLint v9 + Biome |
+| `npm run tsc --workspaces` | Typecheck all packages (CI gate) |
+| `npm run spellcheck` | cspell on TS + markdown |
+| `npm run build --workspaces` | Production build |
+| `npm run docs:build --workspaces` | TypeDoc → `packages/*/docs/` |
+| `npm run clean` | Drop build artifacts + `node_modules` |
+| `npm run bench` | Vitest: performance suite (CodSpeed in CI) |
+
+**Single package** (example: `@ethereumjs/vm`)
+
+```sh
+cd packages/vm
+npm run test
+npm run tsc
+npx vitest test/path/to/test.spec.ts
+```
+
+From root: `npm run build --workspace=@ethereumjs/vm`
+
+<details>
+<summary>Windows: script-shell for Git Bash</summary>
+
+If script paths fail:
+
+```sh
+npm config set script-shell "C:\\Program Files (x86)\\git\\bin\\bash.exe"
+```
+
+Reset: `npm config delete script-shell`
+
+</details>
+
+---
+
+## Conventions
+
+Recurring patterns **as they exist today** — descriptive, not aspirational. Enforceable naming lives in [code-conventions.mdc](.cursor/rules/code-conventions.mdc).
+
+| Pattern | Meaning | Examples |
+| ------- | ------- | -------- |
+| `createX…` | Public factory entry points | `createVM`, `createLegacyTx`, `createBlock` |
+| `createXFromY…` | Alternate input formats | `FromRLP`, `FromRPC`, `FromBytesArray` |
+| `xToY` | Pure converters | `hexToBytes`, `bytesToBigInt` |
+| `isX` | Type guards | `isLegacyTx`, `isHexString` |
+
+### File layout
+
+Most active packages use:
+
+| File | Role |
+| ---- | ---- |
+| `types.ts` | Public interfaces, `*Opts`, event maps |
+| `constructors.ts` | `createX` factories |
+| `params.ts` | EIP-indexed params merged into `Common` |
+
+Exceptions: `packages/tx` → `transactionFactory.ts`; `packages/block` → `block/constructors.ts`, `header/constructors.ts`.
+
+### Options, events, imports
+
+- **Options** — constructors and `createX` take one options object (`EVMOpts`, `VMOpts`, …), not long positional lists. Document non-obvious fields on the interface.
+- **Events** — `eventemitter3` on `EVM`, `VM`, `Blockchain`, `Common`; event maps in `types.ts`; `events?` optional on option types.
+- **ESM imports** — relative paths inside `src/` use explicit `.ts` extensions (rewritten to `.js` in output).
+- **Browser-first `src/`** — no Node built-in imports in shipped library code; tests, scripts, and examples may use Node. Details and exceptions (`e2store`, `devp2p`, archived client): [code-conventions.mdc](.cursor/rules/code-conventions.mdc) § Browser-first production code.
+- **`@ethereumjs/devp2p` CLI** — after `npm run build` in `packages/devp2p`, run **`npx devp2p`** for lab init, NDJSON node traces, attach, and JSON scenarios under `packages/devp2p/scenarios/`; see [packages/devp2p/README.md](packages/devp2p/README.md#cli-and-lab).
+
+### Errors
+
+Not fully uniform yet (known):
+
+| Piece | Location / note |
+| ----- | ---------------- |
+| Base class | `EthereumJSError` in `packages/rlp/src/errors.ts`, re-exported via `util` |
+| Deprecated helper | `EthereumJSErrorWithoutCode` — use `EthereumJSError` with a `code` |
+| EVM-specific | `EVMError` is **not** `Error` / `EthereumJSError` — intentional |
+
+### EIP and parameters
+
+```mermaid
+flowchart LR
+  common["@ethereumjs/common"]
+  params["package params.ts"]
+  code["package code"]
+
+  common -->|"isActivatedEIP, gteHardfork"| code
+  params -->|"common.updateParams"| common
+  common -->|"common.param('name')"| code
+```
+
+- **Activation** (which EIPs / hardforks) → `common`
+- **Numeric values** (gas costs, limits) → each package’s `params.ts`, injected at construction
+
+---
+
+## Tooling
+
+One command and one config pointer per tool. Agent finish steps are in the linked rules — not repeated here.
+
+| Tool | Command | Config | Agent rule |
+| ---- | ------- | ------ | ---------- |
+| TypeScript | `npm run tsc` / `build` | `config/tsconfig*.json` | [typecheck.mdc](.cursor/rules/typecheck.mdc) |
+| Lint | `npm run lint` / `lint:fix` | `eslint.config.mjs` per package | — |
+| Spellcheck | `npm run spellcheck` | `config/cspell-*.json` | [spellcheck.mdc](.cursor/rules/spellcheck.mdc) |
+| Tests | `npm run test` | Vitest per package | [api-tests.mdc](.cursor/rules/api-tests.mdc) |
+| API docs | `npm run docs:build` | `config/cli/typedoc.sh`, `typedoc/` | [api-docs.mdc](.cursor/rules/api-docs.mdc) |
+| Examples | `npm run examples` | `packages/*/examples/` | [examples.mdc](.cursor/rules/examples.mdc) |
+| Snippet PNGs | `npm run snippet:png` | `config/code-snippet/` | — |
+| CI | PR check **`Build / CI`** | `.github/workflows/` | [ci.mdc](.cursor/rules/ci.mdc) |
+| Public API snapshots | `node --import tsx/esm --test scripts/public-api-snapshot.spec.mjs` (CI: **Build** job after install) | `config/public-api-snapshots/` | Regenerate: `node --import tsx/esm scripts/regenerate-public-api-snapshots.mjs` |
+| Performance benchmarks | `npm run bench` | [config/vitest-bench.mts](./config/vitest-bench.mts) | [benchmarks.mdc](.cursor/rules/benchmarks.mdc) |
+
+### Performance benchmarks
+
+Hot-path packages share one Vitest bench suite (`packages/*/benchmarks/*.bench.ts`; heavy local-only cases use `*.local.bench.ts`). Local: `npm run bench` (wall time). CI: CodSpeed **simulation** on **Node 22** (native addon vs Node 26 on Linux), **30-minute job timeout**. **Pull requests:** optional **`performance-benchmarks`** job inside [**`Build`**](.github/workflows/build.yml) when the PR has **`test: performance`** (set on `gh pr create` or before the push that should run benches; labels are read on `opened` / `synchronize` / `ready_for_review`, not on every label edit). **Master:** separate [**`performance-benchmarks`**](.github/workflows/performance-benchmarks.yml) workflow (path-filtered). **Manual dispatch** on that workflow always measures. Informational until **CodSpeed Performance Analysis** is required in branch protection.
+
+If a CodSpeed step on an **old** workflow layout refuses to die after cancel, **`Build`** may stop starting new runs for a branch until GitHub’s default job timeout. Bump the **`Build` concurrency group suffix** in [build.yml](.github/workflows/build.yml) (e.g. `-build-v2` → `-build-v3`) and push to unblock without waiting on the zombie run.
+
+Install the [CodSpeed GitHub App](https://github.com/marketplace/codspeed-continuous-performance-analysis) on the org repo before expecting PR reports.
+
+**Maintainer (one-time / when ready):** after stable `master` simulation runs, optionally require **CodSpeed Performance Analysis** in branch protection (not `Build / CI`). Tune regression threshold in CodSpeed (toward 15–20% if flaky). Acknowledge intentional regressions in the CodSpeed UI.
+
+Carry **`test: performance`** when the change can plausibly move a measured hot loop (interpreter, trie, RLP, hashing, state access), including a structural rewrite of that loop. A hot-path package in the diff, with no real speed impact, stays unlabeled. When unsure, leave it off. Policy: [git.mdc](.cursor/rules/git.mdc).
+
+### EIP modules and `new-eips`
+
+Structural refactors (registries, strategies, pipelines) land on **`master`**. Large experimental fork EIP batches live on branch **`new-eips`**: mostly new per-EIP module files plus one registry line per touched package.
+
+| Pattern | Where | Branch adds |
+| --- | --- | --- |
+| Common activation | `packages/common/src/eips.ts`, `hardforks.ts`, optional `resolveEIPs()` | one `eips` row; params in `params*.ts` |
+| Opcode-only EIPs | `packages/evm/src/opcodes/eips/eipNNNN.ts` + `OPCODE_EIP_MODULES` | one module file + one array entry |
+| Precompiles | `packages/evm/src/precompiles/` | one file + `precompileEntries` row |
+| Header fields | `packages/block/src/header/headerEipFields.ts` | one descriptor row |
+| Tx types | `packages/tx/src/txTypeRegistry.ts` | one map entry + type union line |
+| VM tx / block | `packages/vm/src/runTx/`, `applyPreTransactionSystemOperations` | executor or pipeline step file |
+
+**Workflow:** rebase `new-eips` onto `master` weekly (recorded-resolution enabled, `--force-with-lease`); one EIP per commit series (`EIP-NNNN: …`); graduate via cherry-pick PR to `master`. Agent checklist: [integrate-eip skill](.cursor/skills/integrate-eip/SKILL.md).
+
+### Notes
+
+**TypeScript** — `npm test` does **not** run `tsc`. After TS edits, typecheck the touched package(s).
+
+**Testing** — CI runs affected packages via [ci-affected.mjs](./scripts/ci-affected.mjs). Skipped per-package jobs still count as success. Lint, typecheck, and `npm audit` always run. Full matrix on `master`, workflow dispatch, or shared-config changes. `vm-est-dev` is informational, not gated. Ethy tests run in their own `ethy` job ([ethy-build.yml](.github/workflows/ethy-build.yml)), not in the static bundle.
+
+VM consensus runners: [packages/vm/DEVELOPER.md](./packages/vm/DEVELOPER.md).
+
+**Browser tests** — optional locally. Once: `npm run install-browser-deps`, then `npm run test:browser`. CI uses `mcr.microsoft.com/playwright:v1.60.0-noble` — keep in sync with `playwright` in `package-lock.json`. A pull request runs that job only with **`test: browser`**; without the label the job is skipped and the PR stays mergeable. `master` still runs it.
+
+**Documentation** — TypeDoc 0.28 needs TS 6; monorepo `tsc` uses TS 7. Always use [`config/cli/typedoc.sh`](./config/cli/typedoc.sh), not bare `typedoc`. Cross-package `{@link}` → [`typedoc-external-links.mjs`](./config/typedoc-external-links.mjs).
+
+**Examples** — README snippets sync via embedme: `npm run examples:build` in a package after editing `examples/`.
+
+**Snippet PNGs** — release/social images from `packages/*/examples/` only (local files, Playwright screenshot). Once: `npm run install-browser-deps`. Example: `npm run snippet:png -- --file=packages/vm/examples/runTxGasDimensions.ts --out=tmp/announce/vm.png`. Output defaults to `tmp/announce/`.
+
+**npm / `.npmrc`** — `min-release-age=3` (npm 11.10+) blocks third-party versions published in the last three days under this repo. `@ethereumjs/*` is on `min-release-age-exclude` so post-publish registry smokes work the same day. To install a young **external** package from here, use `npm install … --min-release-age=0`.
+
+---
+
+## Releases
+
+Active packages ([README § Package map](./README.md#package-map)) ship **in sync** with the **same version number**.
+
+| Type | When |
+| ---- | ---- |
+| Bugfix | Most rounds; may include non-finalized EIP behavior |
+| Minor | Hardfork finalization or selected features |
+| Major | Rare; structural API breaks |
+
+### Branches
+
+| Branch | Series | Status |
+| ------ | ------ | ------ |
+| [`master`](https://github.com/ethereumjs/ethereumjs-monorepo) | v10 | Active |
+| [`maintenance-v8`](https://github.com/ethereumjs/ethereumjs-monorepo/tree/maintenance-v8) | v7 / v8 | Maintenance |
+| [`maintenance-v6`](https://github.com/ethereumjs/ethereumjs-monorepo/tree/maintenance-v6) | v6 | Maintenance |
+
+Open PRs against the working branch unless backporting. Past releases: [tags](https://github.com/ethereumjs/ethereumjs-monorepo/tags).
+
+**Procedure** — [release-round skill](.cursor/skills/release-round/SKILL.md) (six gated phases: intent, CHANGELOG, bump, publish, verify, announce). Invariants: [releases.mdc](.cursor/rules/releases.mdc). Commands live in the script headers ([release-npm.ts](./scripts/release-npm.ts), [release-github.ts](./scripts/release-github.ts)). Do not publish without an explicit maintainer request.
+
+---
+
+## Occasional tasks
+
+**Local npm link**
+
+```sh
+cd packages/package-name && npm run build && npm link
+cd path/to/your/project && npm link @ethereumjs/package-name
+# rebuild after changes; unlink when done
+```
+
+**Shared toolchain** — `eslint`, `biome`, `typescript`, … live in the root `package.json`. Categories and update practice: [dependencies.mdc](.cursor/rules/dependencies.mdc).
+
+**Security** — wrong hashes or EVM results are consensus bugs. Trust tiers: [security.mdc](.cursor/rules/security.mdc). Extra care on `tx`, `util` signing, and `evm` / `vm` spec tests.
+
+---
+
+## Agent and Cursor rules
+
+Rules: [`.cursor/rules/`](.cursor/rules/) (plain markdown + YAML front matter — works outside Cursor too).
+
+| Rule | Scope | Remember |
+| ---- | ----- | -------- |
+| `ci`, `typecheck`, `spellcheck`, `git`, `security`, `dependencies` | Always on | Git rule: explicit ask for commit/push/PR/merge; commit-only ≠ push; PR labels when asked |
+| `code-conventions` | `src/`, `examples/` | No public API renames; no Node built-ins in `src/` (browser-first) |
+| `api-docs` | `src/` | Cross-package `{@link @ethereumjs/pkg!Symbol}` |
+| `examples` | `examples/`, READMEs | Run embedme after README edits |
+| `api-tests` | active `test/` | VM consensus runners out of scope; tx matrix + stub KZG in rule |
+| `releases` | CHANGELOG, release scripts | Procedure: `release-round` skill; never publish without approval |
+
+**Skill:** [update-est-fixtures](.cursor/skills/update-est-fixtures/SKILL.md) — EST fixture bumps only.
+
+Package-specific depth stays in package `DEVELOPER.md` files. [AGENTS.md](./AGENTS.md) is the agent index — not a second copy of this document.
+
+---
+
+## Further reading
+
+| Doc | Covers |
+| --- | ------ |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Responsibilities, dependency graph, `runBlock` flow |
+| [packages/vm/DEVELOPER.md](./packages/vm/DEVELOPER.md) | EST / legacy tests, debugging, profiling |
+| [archive/client/DEVELOPER.md](./archive/client/DEVELOPER.md) | Hive notes for archived `@ethereumjs/client` |
+| [CONTRIBUTING.md](./.github/CONTRIBUTING.md) | How to contribute |
+| [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | Community standards |

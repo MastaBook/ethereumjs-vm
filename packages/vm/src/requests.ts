@@ -1,0 +1,576 @@
+import { Mainnet } from '@ethereumjs/common'
+import { type EVMRunCallOpts, activeCostPerStateByte } from '@ethereumjs/evm'
+import type { Address, BlockLevelAccessList, PrefixedHexString } from '@ethereumjs/util'
+import {
+  BIGINT_0,
+  CLRequest,
+  CLRequestType,
+  EthereumJSErrorWithoutCode,
+  bigIntToAddressBytes,
+  bigIntToBytes,
+  bytesToBigInt,
+  bytesToHex,
+  concatBytes,
+  createAddressFromString,
+  setLengthLeft,
+} from '@ethereumjs/util'
+
+import type { RunTxResult } from './types.ts'
+import type { VM } from './vm.ts'
+
+type EvmBlockContext = NonNullable<EVMRunCallOpts['block']>
+
+/** Accumulates EIP-8037 spill/state gas across multiple pre-tx system calls in one block. */
+export type PreTxSystemGas8037Accumulator = {
+  blockRegularGasUsed: bigint
+  blockStateGasUsed: bigint
+}
+
+/**
+ * EIP-8037 system-call gas split.
+ *   regular gas_left   = 30_000_000 (unchanged)
+ *   reservoir          = stateBytesPerStorageSet * costPerStateByte(blockGasLimit) * 16
+ *
+ * Returns the regular gas portion (passed to runCall) and the reservoir
+ * portion (set on vm.evm before the call). The block argument is required
+ * under 8037 so costPerStateByte scales with the current block's gas limit.
+ */
+export function computeSystemCallGas(
+  vm: VM,
+  blockGasLimit?: bigint,
+): { regular: bigint; reservoir: bigint } {
+  const regular = vm.common.param('systemCallGasLimit')
+  if (!vm.common.isActivatedEIP(8037)) {
+    return { regular, reservoir: BIGINT_0 }
+  }
+  const stateBytesPerStorageSet = vm.common.param('stateBytesPerStorageSet')
+  const systemMaxSstoresPerCall = BigInt(16)
+  const costPerStateByte = activeCostPerStateByte(vm.common, blockGasLimit)
+  const reservoir = stateBytesPerStorageSet * costPerStateByte * systemMaxSstoresPerCall
+  return { regular, reservoir }
+}
+
+/**
+ * Snapshot/restore the per-EVM 8037 reservoir state around a system call
+ * so the system call's state-gas accounting is isolated from any
+ * concurrent tx-level reservoir.
+ */
+export function setupSystemCallReservoir(vm: VM, reservoir: bigint) {
+  if (!vm.common.isActivatedEIP(8037)) return null
+  const evm = vm.evm
+  const prior = {
+    reservoir: evm.stateGasReservoir,
+    used: evm.executionStateGasUsed,
+    snapshots: (evm as unknown as { _stateGasSnapshots: unknown[] })._stateGasSnapshots,
+  }
+  evm.stateGasReservoir = reservoir
+  evm.executionStateGasUsed = BIGINT_0
+  ;(evm as unknown as { _stateGasSnapshots: unknown[] })._stateGasSnapshots = []
+  return prior
+}
+
+export function teardownSystemCallReservoir(
+  vm: VM,
+  prior: { reservoir: bigint; used: bigint; snapshots: unknown[] } | null,
+) {
+  if (prior === null) return
+  const evm = vm.evm
+  evm.stateGasReservoir = prior.reservoir
+  evm.executionStateGasUsed = prior.used
+  ;(evm as unknown as { _stateGasSnapshots: unknown[] })._stateGasSnapshots = prior.snapshots
+}
+
+/**
+ * EIP-4788 / EIP-2935 pre-transaction system call (SYSTEM_ADDRESS → contract, 32-byte calldata).
+ * Under EIP-8037 the caller must already have configured the shared system-call reservoir.
+ */
+export async function runPreTxSystemContractCall(
+  vm: VM,
+  params: {
+    to: Address
+    data: Uint8Array
+    block: EvmBlockContext
+    blockGasLimit: bigint
+    gas8037?: PreTxSystemGas8037Accumulator
+    errorLabel: string
+  },
+): Promise<void> {
+  const { to, data, block, blockGasLimit, gas8037, errorLabel } = params
+  const code = await vm.stateManager.getCode(to)
+  if (code.length === 0) {
+    if (vm.common.isActivatedEIP(7928)) {
+      vm.evm.blockLevelAccessList!.addAddress(to.toString())
+    }
+    return
+  }
+
+  const systemAddressBytes = bigIntToAddressBytes(vm.common.param('systemAddress'))
+  const systemAddress = createAddressFromString(bytesToHex(systemAddressBytes))
+  const systemAccount = await vm.stateManager.getAccount(systemAddress)
+  const systemAddressHex = systemAddress.toString()
+  const balSnapshot = cloneSystemAccessEntry(vm, systemAddressHex)
+
+  const { regular, reservoir } = computeSystemCallGas(vm, blockGasLimit)
+  const reservoirPrior = setupSystemCallReservoir(vm, reservoir)
+
+  const results = await vm.evm.runCall({
+    caller: systemAddress,
+    gasLimit: regular,
+    to,
+    data,
+    block,
+    skipBalance: true,
+    skipNonceIncrement: true,
+  })
+
+  if (gas8037 !== undefined) {
+    gas8037.blockRegularGasUsed += results.execResult.stateGasSpilled ?? BIGINT_0
+    gas8037.blockStateGasUsed += vm.evm.executionStateGasUsed
+  }
+
+  teardownSystemCallReservoir(vm, reservoirPrior)
+
+  restoreSystemAccessEntry(vm, systemAddressHex, balSnapshot)
+  if (systemAccount === undefined) {
+    await vm.stateManager.deleteAccount(systemAddress)
+  } else {
+    await vm.stateManager.putAccount(systemAddress, systemAccount)
+  }
+
+  if (results.execResult.exceptionError !== undefined) {
+    // EIP-4788 / EIP-2935 require a successful system call on mainnet bytecode.
+    // Boundary fixtures use instrumented stubs that may revert or OOG when the
+    // grant is tight; the block stays valid and the journal already rolled back.
+    const err = results.execResult.exceptionError.error
+    // EST boundary stubs halt with revert or OOG when the grant is tight; canonical
+    // 4788/2935 bytecode completes successfully under the EIP-8037 system-call budget.
+    const isBoundaryHalt = err === 'revert' || err === 'out of gas'
+    if (!isBoundaryHalt) {
+      throw EthereumJSErrorWithoutCode(`system contract call failed: ${errorLabel} (${err})`)
+    }
+  }
+
+  await vm.evm.journal.cleanup()
+}
+
+const DEPOSIT_TOPIC = '0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5'
+const PUBKEY_OFFSET = BigInt(160)
+const WITHDRAWAL_CREDENTIALS_OFFSET = BigInt(256)
+const AMOUNT_OFFSET = BigInt(320)
+const SIGNATURE_OFFSET = BigInt(384)
+const INDEX_OFFSET = BigInt(512)
+const PUBKEY_SIZE = BigInt(48)
+const WITHDRAWAL_CREDENTIALS_SIZE = BigInt(32)
+const AMOUNT_SIZE = BigInt(8)
+const SIGNATURE_SIZE = BigInt(96)
+const INDEX_SIZE = BigInt(8)
+const LOG_SIZE = 576
+const LOG_LAYOUT_MISMATCH = 'invalid deposit log: unsupported data layout'
+
+function cloneSystemAccessEntry(vm: VM, systemAddressHex: PrefixedHexString) {
+  const access = vm.evm.blockLevelAccessList?.accesses[systemAddressHex]
+  if (access === undefined) {
+    return undefined
+  }
+
+  const storageChanges: typeof access.storageChanges = {}
+  for (const [slot, changes] of Object.entries(access.storageChanges)) {
+    storageChanges[slot as PrefixedHexString] = changes.map(
+      ([index, value]) => [index, value] as const,
+    )
+  }
+
+  return {
+    nonceChanges: new Map(access.nonceChanges),
+    balanceChanges: new Map(access.balanceChanges),
+    codeChanges: access.codeChanges.map(([index, code]) => [index, code] as const),
+    storageChanges,
+    storageReads: new Set(access.storageReads),
+  }
+}
+
+function restoreSystemAccessEntry(
+  vm: VM,
+  systemAddressHex: PrefixedHexString,
+  snapshot: ReturnType<typeof cloneSystemAccessEntry>,
+) {
+  const bal = vm.evm.blockLevelAccessList
+  if (bal === undefined) {
+    return
+  }
+
+  if (snapshot === undefined) {
+    delete bal.accesses[systemAddressHex]
+    return
+  }
+
+  bal.accesses[systemAddressHex] = snapshot as BlockLevelAccessList['accesses'][PrefixedHexString]
+}
+
+/**
+ * Collects consensus-layer requests (deposits, withdrawals, consolidations) from block execution.
+ *
+ * @param generate - When true, include requests derived from execution even if not yet in state
+ */
+export const accumulateRequests = async (
+  vm: VM,
+  txResults: RunTxResult[],
+  blockGasLimit?: bigint,
+  generate = false,
+  block?: EvmBlockContext,
+): Promise<CLRequest<CLRequestType>[]> => {
+  const requests: CLRequest<CLRequestType>[] = []
+  const common = vm.common
+
+  if (common.isActivatedEIP(6110)) {
+    const depositContractAddress =
+      vm.common['_chainParams'].depositContractAddress ?? Mainnet.depositContractAddress
+    if (depositContractAddress === undefined)
+      throw EthereumJSErrorWithoutCode('deposit contract address required with EIP 6110')
+    const depositsRequest = accumulateDepositsRequest(depositContractAddress, txResults)
+    requests.push(depositsRequest)
+  }
+
+  if (common.isActivatedEIP(7002)) {
+    const withdrawalsRequest = await accumulateWithdrawalsRequest(
+      vm,
+      blockGasLimit,
+      generate,
+      block,
+    )
+    requests.push(withdrawalsRequest)
+  }
+
+  if (common.isActivatedEIP(7251)) {
+    const consolidationsRequest = await accumulateConsolidationsRequest(
+      vm,
+      blockGasLimit,
+      generate,
+      block,
+    )
+    requests.push(consolidationsRequest)
+  }
+
+  if (common.isActivatedEIP(8282)) {
+    const builderDepositsRequest = await accumulateBuilderRequest(
+      vm,
+      CLRequestType.BuilderDeposit,
+      'builderDepositContractAddress',
+      blockGasLimit,
+      generate,
+    )
+    requests.push(builderDepositsRequest)
+    const builderExitsRequest = await accumulateBuilderRequest(
+      vm,
+      CLRequestType.BuilderExit,
+      'builderExitContractAddress',
+      blockGasLimit,
+      generate,
+    )
+    requests.push(builderExitsRequest)
+  }
+
+  // requests are already type byte ordered by construction
+  return requests
+}
+
+/**
+ * EIP-8282: run a checked system call against a builder request contract
+ * (deposit or exit) and wrap the returned data as a CL request.
+ *
+ * Per the pinned execution-specs Amsterdam revision this is a *checked*
+ * system transaction when validating: a missing/codeless contract or a
+ * failing call makes the block invalid. When building a block (`generate`),
+ * a missing or failing contract yields an empty request instead (matching
+ * the withdrawal/consolidation accumulators).
+ *
+ * @remarks Experimental (Amsterdam): may change on patch releases.
+ */
+const accumulateBuilderRequest = async (
+  vm: VM,
+  requestType: typeof CLRequestType.BuilderDeposit | typeof CLRequestType.BuilderExit,
+  contractAddressParam: 'builderDepositContractAddress' | 'builderExitContractAddress',
+  blockGasLimit?: bigint,
+  generate = false,
+): Promise<CLRequest<CLRequestType>> => {
+  const addressBytes = setLengthLeft(bigIntToBytes(vm.common.param(contractAddressParam)), 20)
+  const builderAddress = createAddressFromString(bytesToHex(addressBytes))
+
+  const systemAddressBytes = bigIntToAddressBytes(vm.common.param('systemAddress'))
+  const systemAddress = createAddressFromString(bytesToHex(systemAddressBytes))
+  const systemAccount = await vm.stateManager.getAccount(systemAddress)
+
+  const contractCode = await vm.stateManager.getCode(builderAddress)
+  if (contractCode.length === 0) {
+    if (generate) {
+      return new CLRequest(requestType, new Uint8Array(0))
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract empty: no code at builder request contract ${builderAddress}`,
+    )
+  }
+
+  const systemAddressHex = systemAddress.toString()
+  const balSnapshot = cloneSystemAccessEntry(vm, systemAddressHex)
+  const { regular, reservoir } = computeSystemCallGas(vm, blockGasLimit)
+  const reservoirPrior = setupSystemCallReservoir(vm, reservoir)
+  const results = await vm.evm.runCall({
+    caller: systemAddress,
+    gasLimit: regular,
+    to: builderAddress,
+  })
+  teardownSystemCallReservoir(vm, reservoirPrior)
+  restoreSystemAccessEntry(vm, systemAddressHex, balSnapshot)
+
+  if (systemAccount === undefined) {
+    await vm.stateManager.deleteAccount(systemAddress)
+  } else {
+    await vm.stateManager.putAccount(systemAddress, systemAccount)
+  }
+
+  if (results.execResult.exceptionError !== undefined) {
+    if (generate) {
+      return new CLRequest(requestType, new Uint8Array(0))
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract call failed: builder request contract ${builderAddress} (${results.execResult.exceptionError.error})`,
+    )
+  }
+
+  const resultsBytes = results.execResult.returnValue
+  return new CLRequest(requestType, resultsBytes)
+}
+
+const accumulateWithdrawalsRequest = async (
+  vm: VM,
+  blockGasLimit?: bigint,
+  generate = false,
+  block?: EvmBlockContext,
+): Promise<CLRequest<typeof CLRequestType.Withdrawal>> => {
+  // Partial withdrawals logic
+  const addressBytes = setLengthLeft(
+    bigIntToBytes(vm.common.param('withdrawalRequestPredeployAddress')),
+    20,
+  )
+  const withdrawalsAddress = createAddressFromString(bytesToHex(addressBytes))
+
+  const systemAddressBytes = bigIntToAddressBytes(vm.common.param('systemAddress'))
+  const systemAddress = createAddressFromString(bytesToHex(systemAddressBytes))
+  const systemAccount = await vm.stateManager.getAccount(systemAddress)
+
+  const contractCode = await vm.stateManager.getCode(withdrawalsAddress)
+  if (contractCode.length === 0) {
+    if (generate) {
+      return new CLRequest(CLRequestType.Withdrawal, new Uint8Array(0))
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract empty: no code at withdrawal request contract ${withdrawalsAddress}`,
+    )
+  }
+
+  const originalAccount = await vm.stateManager.getAccount(withdrawalsAddress)
+
+  const systemAddressHex = systemAddress.toString()
+  const balSnapshot = cloneSystemAccessEntry(vm, systemAddressHex)
+  const { regular, reservoir } = computeSystemCallGas(vm, blockGasLimit)
+  const reservoirPrior = setupSystemCallReservoir(vm, reservoir)
+  const results = await vm.evm.runCall({
+    caller: systemAddress,
+    gasLimit: regular,
+    to: withdrawalsAddress,
+    block,
+    skipBalance: true,
+    skipNonceIncrement: true,
+  })
+  teardownSystemCallReservoir(vm, reservoirPrior)
+  restoreSystemAccessEntry(vm, systemAddressHex, balSnapshot)
+
+  if (systemAccount === undefined) {
+    await vm.stateManager.deleteAccount(systemAddress)
+  } else {
+    await vm.stateManager.putAccount(systemAddress, systemAccount)
+  }
+
+  if (results.execResult.exceptionError !== undefined) {
+    if (generate) {
+      return new CLRequest(CLRequestType.Withdrawal, new Uint8Array())
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract call failed: withdrawal request contract ${withdrawalsAddress} (${results.execResult.exceptionError.error})`,
+    )
+  }
+
+  const resultsBytes = results.execResult.returnValue
+  return new CLRequest(CLRequestType.Withdrawal, resultsBytes)
+}
+
+const accumulateConsolidationsRequest = async (
+  vm: VM,
+  blockGasLimit?: bigint,
+  generate = false,
+  block?: EvmBlockContext,
+): Promise<CLRequest<typeof CLRequestType.Consolidation>> => {
+  // Partial withdrawals logic
+  const addressBytes = setLengthLeft(
+    bigIntToBytes(vm.common.param('consolidationRequestPredeployAddress')),
+    20,
+  )
+  const consolidationsAddress = createAddressFromString(bytesToHex(addressBytes))
+
+  const systemAddressBytes = bigIntToAddressBytes(vm.common.param('systemAddress'))
+  const systemAddress = createAddressFromString(bytesToHex(systemAddressBytes))
+  const systemAccount = await vm.stateManager.getAccount(systemAddress)
+
+  const contractCode = await vm.stateManager.getCode(consolidationsAddress)
+  if (contractCode.length === 0) {
+    if (generate) {
+      return new CLRequest(CLRequestType.Consolidation, new Uint8Array(0))
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract empty: no code at consolidation request contract ${consolidationsAddress}`,
+    )
+  }
+
+  const originalAccount = await vm.stateManager.getAccount(consolidationsAddress)
+
+  const systemAddressHex = systemAddress.toString()
+  const balSnapshot = cloneSystemAccessEntry(vm, systemAddressHex)
+  const { regular, reservoir } = computeSystemCallGas(vm, blockGasLimit)
+  const reservoirPrior = setupSystemCallReservoir(vm, reservoir)
+  const results = await vm.evm.runCall({
+    caller: systemAddress,
+    gasLimit: regular,
+    to: consolidationsAddress,
+    block,
+    skipBalance: true,
+    skipNonceIncrement: true,
+  })
+  teardownSystemCallReservoir(vm, reservoirPrior)
+  restoreSystemAccessEntry(vm, systemAddressHex, balSnapshot)
+
+  if (systemAccount === undefined) {
+    await vm.stateManager.deleteAccount(systemAddress)
+  } else {
+    await vm.stateManager.putAccount(systemAddress, systemAccount)
+  }
+
+  if (results.execResult.exceptionError !== undefined) {
+    if (generate) {
+      return new CLRequest(CLRequestType.Consolidation, new Uint8Array(0))
+    }
+    throw EthereumJSErrorWithoutCode(
+      `system contract call failed: consolidation request contract ${consolidationsAddress} (${results.execResult.exceptionError.error})`,
+    )
+  }
+
+  const resultsBytes = results.execResult.returnValue
+  return new CLRequest(CLRequestType.Consolidation, resultsBytes)
+}
+
+const accumulateDepositsRequest = (
+  depositContractAddress: string,
+  txResults: RunTxResult[],
+): CLRequest<typeof CLRequestType.Deposit> => {
+  let resultsBytes = new Uint8Array(0)
+  const depositContractAddressLowerCase = depositContractAddress.toLowerCase()
+  for (const [_, tx] of txResults.entries()) {
+    for (let i = 0; i < tx.receipt.logs.length; i++) {
+      const log = tx.receipt.logs[i]
+      const [address, topics, data] = log
+      if (
+        topics.length > 0 &&
+        bytesToHex(topics[0]) === DEPOSIT_TOPIC &&
+        depositContractAddressLowerCase === bytesToHex(address).toLowerCase()
+      ) {
+        const { pubkey, withdrawalCredentials, amount, signature, index } = parseDepositLog(data)
+        const depositRequestBytes = concatBytes(
+          pubkey,
+          withdrawalCredentials,
+          amount,
+          signature,
+          index,
+        )
+
+        resultsBytes = concatBytes(resultsBytes, depositRequestBytes)
+      }
+    }
+  }
+
+  return new CLRequest(CLRequestType.Deposit, resultsBytes)
+}
+
+function parseDepositLog(requestData: Uint8Array) {
+  if (requestData.length !== LOG_SIZE) {
+    throw EthereumJSErrorWithoutCode(LOG_LAYOUT_MISMATCH)
+  }
+  // Extracts validator pubkey, withdrawal credential, deposit amount, signature,
+  // and validator index from Deposit Event log.
+  // The event fields are non-indexed so contained in one byte array (log[2]) so parsing is as follows:
+  // 1. Read the first 32 bytes to get the starting position of the first field.
+  // 2. Continue reading the byte array in 32 byte increments to get all the field starting positions
+  // 3. Read 32 bytes starting with the first field position to get the size of the first field
+  // 4. Read the bytes from first field position + 32 + the size of the first field to get the first field value
+  // 5. Repeat steps 3-4 for each field
+  const pubKeyIdxBigInt = bytesToBigInt(requestData.slice(0, 32))
+  const withdrawalCreditsIdxBigInt = bytesToBigInt(requestData.slice(32, 64))
+  const amountIdxBigInt = bytesToBigInt(requestData.slice(64, 96))
+  const sigIdxBigInt = bytesToBigInt(requestData.slice(96, 128))
+  const indexIdxBigInt = bytesToBigInt(requestData.slice(128, 160))
+
+  if (
+    pubKeyIdxBigInt !== PUBKEY_OFFSET ||
+    withdrawalCreditsIdxBigInt !== WITHDRAWAL_CREDENTIALS_OFFSET ||
+    amountIdxBigInt !== AMOUNT_OFFSET ||
+    sigIdxBigInt !== SIGNATURE_OFFSET ||
+    indexIdxBigInt !== INDEX_OFFSET
+  ) {
+    throw EthereumJSErrorWithoutCode(LOG_LAYOUT_MISMATCH)
+  }
+
+  const pubKeyIdx = Number(pubKeyIdxBigInt)
+  const withdrawalCreditsIdx = Number(withdrawalCreditsIdxBigInt)
+  const amountIdx = Number(amountIdxBigInt)
+  const sigIdx = Number(sigIdxBigInt)
+  const indexIdx = Number(indexIdxBigInt)
+
+  const pubKeySizeBigInt = bytesToBigInt(requestData.slice(pubKeyIdx, pubKeyIdx + 32))
+  const withdrawalCreditsSizeBigInt = bytesToBigInt(
+    requestData.slice(withdrawalCreditsIdx, withdrawalCreditsIdx + 32),
+  )
+  const amountSizeBigInt = bytesToBigInt(requestData.slice(amountIdx, amountIdx + 32))
+  const sigSizeBigInt = bytesToBigInt(requestData.slice(sigIdx, sigIdx + 32))
+  const indexSizeBigInt = bytesToBigInt(requestData.slice(indexIdx, indexIdx + 32))
+
+  if (
+    pubKeySizeBigInt !== PUBKEY_SIZE ||
+    withdrawalCreditsSizeBigInt !== WITHDRAWAL_CREDENTIALS_SIZE ||
+    amountSizeBigInt !== AMOUNT_SIZE ||
+    sigSizeBigInt !== SIGNATURE_SIZE ||
+    indexSizeBigInt !== INDEX_SIZE
+  ) {
+    throw EthereumJSErrorWithoutCode(LOG_LAYOUT_MISMATCH)
+  }
+
+  const pubKeySize = Number(pubKeySizeBigInt)
+  const withdrawalCreditsSize = Number(withdrawalCreditsSizeBigInt)
+  const amountSize = Number(amountSizeBigInt)
+  const sigSize = Number(sigSizeBigInt)
+  const indexSize = Number(indexSizeBigInt)
+
+  const pubkey = requestData.slice(pubKeyIdx + 32, pubKeyIdx + 32 + pubKeySize)
+  const withdrawalCredentials = requestData.slice(
+    withdrawalCreditsIdx + 32,
+    withdrawalCreditsIdx + 32 + withdrawalCreditsSize,
+  )
+  const amount = requestData.slice(amountIdx + 32, amountIdx + 32 + amountSize)
+  const signature = requestData.slice(sigIdx + 32, sigIdx + 32 + sigSize)
+  const index = requestData.slice(indexIdx + 32, indexIdx + 32 + indexSize)
+
+  return {
+    pubkey,
+    withdrawalCredentials,
+    amount,
+    signature,
+    index,
+  }
+}

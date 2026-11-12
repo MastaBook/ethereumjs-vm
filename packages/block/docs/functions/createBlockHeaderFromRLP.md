@@ -1,0 +1,35 @@
+[**@ethereumjs/block**](../README.md)
+
+***
+
+[@ethereumjs/block](../README.md) / createBlockHeaderFromRLP
+
+# Function: createBlockHeaderFromRLP()
+
+> **createBlockHeaderFromRLP**(`serializedHeaderData`, `opts?`): [`BlockHeader`](../classes/BlockHeader.md)
+
+Defined in: [header/constructors.ts:69](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/block/src/header/constructors.ts#L69)
+
+Instantiate a block header from RLP-serialized bytes.
+
+## Parameters
+
+### serializedHeaderData
+
+`Uint8Array`
+
+### opts?
+
+[`BlockOptions`](../interfaces/BlockOptions.md) = `{}`
+
+## Returns
+
+[`BlockHeader`](../classes/BlockHeader.md)
+
+## Throws
+
+If RLP decode result is not an array
+
+## Throws
+
+If decoded values fail [createBlockHeaderFromBytesArray](createBlockHeaderFromBytesArray.md) checks

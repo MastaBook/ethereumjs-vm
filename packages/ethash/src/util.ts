@@ -1,5 +1,5 @@
-import { BN, keccak256 } from 'ethereumjs-util'
-const MR = require('miller-rabin')
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { isProbablyPrime } from 'bigint-crypto-utils'
 
 export const params = {
   DATASET_BYTES_INIT: 1073741824, // 2^30
@@ -16,45 +16,41 @@ export const params = {
   WORD_BYTES: 4,
 }
 
-export function getCacheSize(epoc: number) {
-  const mr = new MR()
-  let sz =
-    (exports.params.CACHE_BYTES_INIT as number) +
-    (exports.params.CACHE_BYTES_GROWTH as number) * epoc
-  sz -= exports.params.HASH_BYTES
-  while (!mr.test(new BN(sz / exports.params.HASH_BYTES))) {
-    sz -= 2 * exports.params.HASH_BYTES
+export async function getCacheSize(epoc: number) {
+  const { CACHE_BYTES_INIT, CACHE_BYTES_GROWTH, HASH_BYTES } = params
+  let sz = CACHE_BYTES_INIT + CACHE_BYTES_GROWTH * epoc
+  sz -= HASH_BYTES
+  while (!(await isProbablyPrime(sz / HASH_BYTES, undefined, true))) {
+    sz -= 2 * HASH_BYTES
   }
   return sz
 }
 
-export function getFullSize(epoc: number) {
-  const mr = new MR()
-  let sz =
-    (exports.params.DATASET_BYTES_INIT as number) +
-    (exports.params.DATASET_BYTES_GROWTH as number) * epoc
-  sz -= exports.params.MIX_BYTES
-  while (!mr.test(new BN(sz / exports.params.MIX_BYTES))) {
-    sz -= 2 * exports.params.MIX_BYTES
+export async function getFullSize(epoc: number) {
+  const { DATASET_BYTES_INIT, DATASET_BYTES_GROWTH, MIX_BYTES } = params
+  let sz = DATASET_BYTES_INIT + DATASET_BYTES_GROWTH * epoc
+  sz -= MIX_BYTES
+  while (!(await isProbablyPrime(sz / MIX_BYTES, undefined, true))) {
+    sz -= 2 * MIX_BYTES
   }
   return sz
 }
 
-export function getEpoc(blockNumber: number) {
-  return Math.floor(blockNumber / exports.params.EPOCH_LENGTH)
+export function getEpoc(blockNumber: bigint) {
+  return Number(blockNumber / BigInt(params.EPOCH_LENGTH))
 }
 
 /**
- * Generates a seed give the end epoc and optional the begining epoc and the
- * begining epoc seed
+ * Generates a seed give the end epoc and optional the beginning epoc and the
+ * beginning epoc seed
  * @method getSeed
- * @param seed Buffer
+ * @param seed Uint8Array
  * @param begin Number
  * @param end Number
  */
-export function getSeed(seed: Buffer, begin: number, end: number) {
+export function getSeed(seed: Uint8Array, begin: number, end: number) {
   for (let i = begin; i < end; i++) {
-    seed = keccak256(seed)
+    seed = keccak_256(seed)
   }
   return seed
 }
@@ -63,17 +59,22 @@ export function fnv(x: number, y: number) {
   return ((((x * 0x01000000) | 0) + ((x * 0x193) | 0)) ^ y) >>> 0
 }
 
-export function fnvBuffer(a: Buffer, b: Buffer) {
-  const r = Buffer.alloc(a.length)
+export function fnvBytes(a: Uint8Array, b: Uint8Array) {
+  const r = new Uint8Array(a.length)
+  const rView = new DataView(r.buffer)
   for (let i = 0; i < a.length; i = i + 4) {
-    r.writeUInt32LE(fnv(a.readUInt32LE(i), b.readUInt32LE(i)), i)
+    rView.setUint32(
+      i,
+      fnv(new DataView(a.buffer).getUint32(i, true), new DataView(b.buffer).getUint32(i, true)),
+      true,
+    )
   }
   return r
 }
 
-export function bufReverse(a: Buffer) {
+export function bytesReverse(a: Uint8Array) {
   const length = a.length
-  const b = Buffer.alloc(length)
+  const b = new Uint8Array(length)
   for (let i = 0; i < length; i++) {
     b[i] = a[length - i - 1]
   }

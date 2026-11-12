@@ -1,4 +1,4 @@
-# ethereumjs-devp2p
+# @ethereumjs/devp2p `v10`
 
 [![NPM Status][devp2p-npm-badge]][devp2p-npm-link]
 [![GitHub Issues][devp2p-issues-badge]][devp2p-issues-link]
@@ -6,413 +6,423 @@
 [![Coverage Status][devp2p-coverage-badge]][devp2p-coverage-link]
 [![Discord][discord-badge]][discord-link]
 
-This library bundles different components for lower-level peer-to-peer connection and message exchange:
+| Ethereum **devp2p** stack in TypeScript — discovery (DPT, DNS), **RLPx** transport, and **ETH** / **SNAP** wire subprotocols. |
+| --- |
 
-- Distributed Peer Table (DPT) / Node Discovery
-- RLPx Transport Protocol
-- Ethereum Wire Protocol (ETH)
-- Light Ethereum Subprotocol (LES/2)
+- 🔎 **DPT** node discovery (v4 UDP) and optional **EIP-1459** DNS ENR trees
+- 🔐 **RLPx** encrypted sessions (ECIES handshake, capability negotiation)
+- 📡 **ETH** wire (versions 62–68) and **SNAP** sync subprotocol
+- 🧪 **`devp2p` CLI** — local lab, long-lived sessions, scripted wire verbs
+- 📋 **JSON scenarios** for in-process regression tests (replaces legacy simulators)
+- 🏄🏾‍♂️ Pure JS default · **Node.js ≥ 22**
 
-The library is based on [ethereumjs/node-devp2p](https://github.com/ethereumjs/node-devp2p) as well
-as other sub-libraries (`node-*` named) (all outdated).
+Runnable examples: [`examples/`](./examples/). Generated API: [`docs/`](./docs).
 
-## Run/Build
+## Table of Contents
 
-To build the `dist/` directory, run:
+- [Installation](#installation)
+- [Choose a path](#choose-a-path)
+- [CLI and lab](#cli-and-lab)
+- [Library stack](#library-stack)
+- [Examples](#examples)
+- [JSON scenarios](#json-scenarios)
+- [Debugging](#debugging)
+- [API reference](#api-reference)
+- [Developer](#developer)
+- [Protocol references](#protocol-references)
+- [EthereumJS](#ethereumjs)
+- [License](#license)
 
+## Installation
+
+```shell
+npm install @ethereumjs/devp2p
 ```
-npm run build
+
+From this package directory (after `npm run build`) or any project that depends on `@ethereumjs/devp2p`, run the CLI with **`npx devp2p`** (see [CLI and lab](#cli-and-lab)).
+
+Requires **`@ethereumjs/common`** on the same major version for chain config, bootstrap nodes, and fork IDs on ETH connections.
+
+## Choose a path
+
+| Goal | Start here |
+| --- | --- |
+| Step through discovery → handshake → ETH messages without a custom app | [CLI and lab](#cli-and-lab) (`init`, `node run`, `peer` / `eth` / `snap` verbs) |
+| Minimal TypeScript that compiles in CI | [Examples](#examples) → `npm run examples` |
+| Talk to mainnet bootnodes or live peers | [`examples/manual/`](./examples/manual/) (network access; use `DEBUG=ethjs,devp2p:*`) |
+| Embed devp2p in your own node or tool | [Library stack](#library-stack) + [API reference](#api-reference) |
+| Assert wire behaviour in tests | [JSON scenarios](#json-scenarios) |
+
+## CLI and lab
+
+The CLI is built for **one long-lived node process** and many short control commands. **`node run`** keeps a single DPT + RLPx stack (and negotiated subprotocols) until **`node stop`**. Every other command opens the node’s control socket, runs one request, and exits — the peer and handshake stay in the daemon.
+
+**Lab layout** (default **`./lab`** under the current working directory; override with **`--dir`** / **`-l`**):
+
+| Path | Purpose |
+| --- | --- |
+| `lab/network.json` | Chain / hardfork for the lab |
+| `lab/<name>/node.json` | Listen ports, capabilities (`eth68`, `snap`, …) |
+| `lab/<name>/key.json` | Node private key |
+| `lab/<name>/enode.txt` | Enode URL |
+| `lab/<name>/control.sock` | Unix socket while `node run` is active |
+| `lab/.node` | Default node name (`devp2p use`) |
+
+**Default node** when **`--node`** / **`-n`** is omitted: **`DEVP2P_NODE`** → **`lab/.node`** (from **`devp2p use <name>`** or updated when **`node run`** starts) → only node in the lab → only running daemon. Override anytime with **`--node bob`**.
+
+### Session verbs
+
+| Area | Commands |
+| --- | --- |
+| Peers | `peer add` (`--wait` for RLPx handshake), `peer list`, `peer disconnect` |
+| Discovery | `dpt ping`, `dpt neighbours` (session DPT; prefer over ephemeral `discovery-v4 ping`) |
+| Transport | `rlpx ping`, `wait --event rlpx.PONG` |
+| ETH | `eth send`, `eth wait` (builders + `--json` / `--rlp`) |
+| SNAP | `snap send`, `snap wait` |
+| Any event | `wait --event peer.added \| eth.NAME \| snap.NAME \| rlpx.PONG` |
+| REPL | `attach` (same verbs as one-shot CLI) |
+
+NDJSON events: `npx devp2p node run --events ndjson`. Run **`npx devp2p --help`** for flags.
+
+Session commands print one JSON object per line. To read a long result, pipe it through [jq](https://jqlang.org/) (`brew install jq` on macOS). The same program pretty-prints NDJSON from a daemon terminal.
+
+```bash
+npx devp2p peer list | jq .
 ```
 
-You can also use `ts-node` to run a script without first transpiling to js (you need to `npm i --save-dev ts-node` first):
+Without jq, `python3 -m json.tool` formats one JSON object the same way.
 
+### Two local nodes (STATUS + headers)
+
+Use the **same working directory in all terminals** (typically **`packages/devp2p`**) — lab data is always **`./lab`** there. Run **`npm run build`**, then **restart every `node run`** after a rebuild (Ctrl+C, start again). **`devp2p use <name>`** in Terminal 3 picks the node for session commands (writes `lab/.node`); starting a daemon does **not** change that. JSON includes **`"node"`**. A current build answers `peer add --wait` with `data.rlpxPeers` and `data.connected`.
+
+Default ports after `init --nodes alice,bob --base-port 30300`: **Alice 30300**, **Bob 30302** (see `lab/alice/node.json` and `lab/bob/node.json`).
+
+**`use`** picks which lab node your one-shot commands talk to. **`node run`** must be running for that same node in another terminal. **`peer add`** is always “on the session node, dial this host/port (the other node).”
+
+**Once — create the lab**
+
+```bash
+npx devp2p init --nodes alice,bob
 ```
-node -r ts-node/register [YOUR_SCRIPT_TO_RUN.ts]
+
+**Terminal 1 — Bob’s daemon** (listen first so Alice can dial in)
+
+```bash
+npx devp2p use bob
+npx devp2p node run --node bob --events ndjson
 ```
 
-## Usage/Examples
+**Terminal 2 — Alice’s daemon**
 
-All components of this library are implemented as Node `EventEmitter` objects
-and make heavy use of the Node.js network stack.
-
-You can react on events from the network like this:
-
+```bash
+npx devp2p use alice
+npx devp2p node run --node alice --events ndjson
 ```
-dpt.on('peer:added', (peer) => {
-  // Do something...
+
+**Terminal 3 — on Alice’s session: dial Bob, STATUS, headers**
+
+Commands below go to **Alice** (`use alice`). **30302** is **Bob’s** udp/tcp from `lab/bob/node.json`, not Alice’s 30300.
+
+```bash
+npx devp2p use alice
+npx devp2p peer add 127.0.0.1 30302 --tcp 30302 --wait
+npx devp2p peer list
+```
+
+(`--wait` until RLPx is up. Both daemons send a default mainnet genesis **STATUS** on connect so the link is not dropped after 10 seconds (`TIMEOUT`). A later `eth send STATUS` is a no-op if that already happened. **`peer list`** should still show index `0`. Redial after every daemon restart.)
+
+```bash
+npx devp2p eth send STATUS --json '{"td":"0x040000000000","bestHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3","genesisHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}'
+npx devp2p eth send GET_BLOCK_HEADERS --json '{"requestId":"0x01","blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3","max":1,"skip":0,"reverse":false}'
+npx devp2p eth wait BLOCK_HEADERS --timeout-ms 30000
+```
+
+Bob answers that get with **BLOCK_HEADERS** and the same request id. The list is empty: a lab node has no chain. The same empty answer is sent for the other ETH gets (bodies, receipts, pooled transactions) and for SNAP gets. Watch **`t: "event"`** lines on Terminals 1–2 (NDJSON). **`attach`** accepts the same verbs (`eth send GET_BLOCK_HEADERS blockHash=0x… max=1`, `wait eth.BLOCK_HEADERS`, …).
+
+### Two-pane TUI
+
+One terminal for two lab nodes. Each message is its own box, and the shorter box is padded so the two sides of a row stay aligned. A get lines up with the same get, then the answer lines up with the answer: **GET_BLOCK_HEADERS** beside **GET_BLOCK_HEADERS**, then **BLOCK_HEADERS** beside **BLOCK_HEADERS**. RLPx **PING** / **PONG** stay hidden unless you pass **`--pings`**. Protocol names (**ETH**, **SNAP**, **RLPx**, **DPT**) are inverted labels.
+
+![Alice and Bob in the two-pane TUI after STATUS, peer list, and an empty header answer](./diagram/tui-two-pane.jpg)
+
+```bash
+npx devp2p init --nodes alice,bob   # once
+npx devp2p tui                      # alice | bob; starts both daemons
+```
+
+On startup the TUI dials the other lab node. Both sides send a mainnet genesis **STATUS** (Alice **30300**, Bob **30302**). The screenshot is that session continued: Alice's **`peer list`**, then Bob's **GET_BLOCK_HEADERS** and the empty **BLOCK_HEADERS** answer.
+
+Each pane has its own prompt and its own command history (`lab/.tui-history.json`, 50 lines per node). **Tab** moves between them; a half-typed line stays put. **Up** / **Down** walk that pane's history. **Enter** sends that line to that node's control socket (same verbs as **`attach`**). A reply such as **`peer list`** is drawn as a box on that pane (each RLPx peer, or `(none)`). **`q`** on an empty prompt, or Ctrl+C, quits and stops only daemons this TUI started.
+
+```text
+alice> peer list
+bob> eth send GET_BLOCK_HEADERS blockHash=0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3 max=1
+```
+
+Name the panes explicitly, or watch one local node beside a remote peer. The right side is that peer as seen from the left node, so only the left pane has a prompt:
+
+```bash
+npx devp2p tui --left alice --right bob
+npx devp2p tui --left alice --remote 65.108.70.101:30303
+npx devp2p tui --pings
+```
+
+The status line shows the listen address, RLPx peer count, client id when the hello carried one, and whether ETH **STATUS** has gone out and come in. If a daemon is already running, the TUI attaches and leaves it running on quit. A live message stream needs the daemon the TUI spawned (`node run --events ndjson`); stop a conflicting `node run` first.
+
+### Toward a public peer
+
+With **Alice** still running (`node run --node alice`). These are the **mainnet** bootnodes from `@ethereumjs/common` (`Common({ chain: Mainnet }).bootstrapNodes()`). Discovery pings to all four answered on 2026-10-22. The copy-paste target is the EU west node. If `neighbours` is empty, try the next row.
+
+| Where | Address | UDP / TCP |
+| --- | --- | --- |
+| EU central | `157.90.35.166` | 30303 |
+| EU west | `65.108.70.101` | 30303 |
+| US east | `3.209.45.79` | 30303 |
+| Asia southeast | `18.138.108.67` | 30303 |
+
+```bash
+npx devp2p use alice
+npx devp2p dpt neighbours 65.108.70.101 30303 | jq .
+```
+
+The JSON `neighbours` list is what the bootnode returns: other nodes’ addresses, UDP/TCP ports, and ids. That is the useful public-network response. A bootnode answers only after a discovery ping and an ENR reply (the daemon sends both). If this node is quiet, try the next row in the table.
+
+## Library stack
+
+High-level layout ([diagram](./diagram/devp2p.svg)):
+
+```text
+  Your app                    @ethereumjs/common (chain, bootnodes, forkId)
+      │                                    │
+      ▼                                    ▼
+    DPT ──peer table──► RLPx ──capabilities──► ETH / SNAP (per Peer)
+   UDP v4              TCP + ECIES              RLP + optional Snappy
+   optional DNS ENR
+```
+
+`DPT`, `RLPx`, and each negotiated subprotocol expose an **`events`** emitter ([EventEmitter3](https://github.com/primus/eventemitter3)). Register listeners before bootstrap or dial.
+
+```ts
+import type { ETH } from '@ethereumjs/devp2p'
+import { EthMessageCodes } from '@ethereumjs/devp2p'
+import { intToBytes, hexToBytes } from '@ethereumjs/util'
+
+// Discovery peer table
+dpt.events.on('peer:added', (peer) => {
+  /* candidate enode */
+})
+dpt.events.on('error', (err) => {
+  console.error(err)
+})
+
+// Encrypted sessions (typically share one DPT instance)
+rlpx.events.on('peer:added', (peer) => {
+  const eth = peer.getProtocols()[0] as ETH
+
+  eth.sendStatus({
+    td: intToBytes(17179869184),
+    bestHash: hexToBytes('0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3'),
+    genesisHash: hexToBytes('0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3'),
+  })
+
+  eth.events.once('status', () => {
+    eth.sendMessage(EthMessageCodes.GET_BLOCK_HEADERS, [
+      Uint8Array.from([1]),
+      [intToBytes(1), Uint8Array.from([1]), Uint8Array.from([]), Uint8Array.from([])],
+    ])
+  })
+
+  eth.events.on('message', (code, payload) => {
+    /* BLOCK_HEADERS, NEW_BLOCK_HASHES, … */
+  })
 })
 ```
 
-Basic example to connect to some bootstrap nodes and get basic peer info:
+Construct `dpt` and `rlpx` with a secp256k1 private key, pass **`common`** and **`capabilities`** (e.g. `[ETH.eth68, SNAP.snap]` from `@ethereumjs/devp2p`) into `RLPx`, and optionally attach the same **`dpt`** instance so discovered peers feed RLPx dials.
 
-- [simple](examples/simple.ts)
+### Threaded network
 
-Communicate with peers to read new transaction and block information:
+For clients that want devp2p off the main thread (UI, RPC, or EVM workers), use **`createThreadedNetwork`** and **`Devp2pWorkerClient`**. A dedicated `worker_threads` Worker runs `DPT` + `RLPx`; the main thread sends commands and receives telemetry plus raw ETH/SNAP payloads over `postMessage` (large frames use transferable `ArrayBuffer`s).
 
-- [peer-communication](examples/peer-communication.ts)
+Discovery throttling and empty-wire **Good Citizen** replies for `GET_*` messages are enabled by default in the worker host. Pass **`goodCitizen: false`** when you want every inbound subprotocol frame on the main thread.
 
-Run an example with:
+```ts
+import {
+  createThreadedNetwork,
+  genPrivateKey,
+  resolveThreadedNetworkModuleUrl,
+} from '@ethereumjs/devp2p'
 
-```
-DEBUG=devp2p:* node -r ts-node/register ./examples/peer-communication.ts
-```
+const workerModuleUrl = resolveThreadedNetworkModuleUrl(import.meta.url)
 
-## Distributed Peer Table (DPT) / Node Discovery
+const client = await createThreadedNetwork(
+  {
+    privateKey: genPrivateKey(),
+    chain: 'mainnet',
+    capabilities: ['eth68', 'snap1'],
+    listenPort: 30303,
+    status: {
+      td: '0x040000000000',
+      bestHash: '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3',
+      genesisHash: '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3',
+    },
+  },
+  workerModuleUrl,
+)
 
-Maintain/manage a list of peers, see [./src/dpt/](./src/dpt/), also
-includes node discovery ([./src/dpt/server.ts](./src/dpt/server.ts))
-
-### Usage
-
-Create your peer table:
-
-```
-const dpt = new DPT(Buffer.from(PRIVATE_KEY, 'hex'), {
-  endpoint: {
-    address: '0.0.0.0',
-    udpPort: null,
-    tcpPort: null
-  }
+client.events.on('telemetry', (snap) => {
+  /* peer ids, caps, RTT, worker diagnostics */
 })
-```
-
-Add some bootstrap nodes (or some custom nodes with `dpt.addPeer()`):
-
-```
-dpt.bootstrap(bootnode).catch((err) => console.error('Something went wrong!'))
-```
-
-### API
-
-See the following [diagram](./diagram/devp2p.svg) for a high level overview on the library.
-
-#### `DPT` (extends `EventEmitter`)
-
-Distributed Peer Table. Manages a Kademlia DHT K-bucket (`Kbucket`) for storing peer information
-and a `BanList` for keeping a list of bad peers. `Server` implements the node discovery (`ping`,
-`pong`, `findNeighbours`).
-
-##### `new DPT(privateKey, options)`
-
-Creates new DPT object
-
-- `privateKey` - Key for message encoding/signing.
-- `options.refreshInterval` - Interval in ms for refreshing (calling `findNeighbours`) the peer list (default: `60s`).
-- `options.createSocket` - A datagram (dgram) `createSocket` function, passed to `Server` (default: `dgram.createSocket.bind(null, 'udp4')`).
-- `options.timeout` - Timeout in ms for server `ping`, passed to `Server` (default: `10s`).
-- `options.endpoint` - Endpoint information to send with the server `ping`, passed to `Server` (default: `{ address: '0.0.0.0', udpPort: null, tcpPort: null }`).
-
-#### `dpt.bootstrap(peer)` (`async`)
-
-Uses a peer as new bootstrap peer and calls `findNeighbouts`.
-
-- `peer` - Peer to be added, format `{ address: [ADDRESS], udpPort: [UDPPORT], tcpPort: [TCPPORT] }`.
-
-#### `dpt.addPeer(object)` (`async`)
-
-Adds a new peer.
-
-- `object` - Peer to be added, format `{ address: [ADDRESS], udpPort: [UDPPORT], tcpPort: [TCPPORT] }`.
-
-For other utility functions like `getPeer`, `getPeers` see [./src/dpt/dpt.ts](./src/dpt/dpt.ts).
-
-### Events
-
-Events emitted:
-
-| Event        |         Description          |
-| ------------ | :--------------------------: |
-| peer:added   |   Peer added to DHT bucket   |
-| peer:removed | Peer removed from DHT bucket |
-| peer:new     |        New peer added        |
-| listening    |    Forwarded from server     |
-| close        |    Forwarded from server     |
-| error        |    Forwarded from server     |
-
-### Reference
-
-- [Node discovery protocol](https://github.com/ethereum/wiki/wiki/Node-discovery-protocol)
-- [RLPx - Node Discovery Protocol](https://github.com/ethereum/devp2p/blob/master/rlpx.md#node-discovery)
-- [Kademlia Peer Selection](https://github.com/ethereum/wiki/wiki/Kademlia-Peer-Selection)
-
-## RLPx Transport Protocol
-
-Connect to a peer, organize the communication, see [./src/rlpx/](./src/rlpx/)
-
-### Usage
-
-Instantiate an [@ethereumjs/common](https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/common)
-instance with the network you want to connect to:
-
-```typescript
-const common = new Common({ chain: 'mainnet' })
-```
-
-Create your `RLPx` object, e.g.:
-
-```typescript
-const rlpx = new devp2p.RLPx(PRIVATE_KEY, {
-  dpt,
-  maxPeers: 25,
-  capabilities: [devp2p.ETH.eth63, devp2p.ETH.eth62],
-  common,
+client.events.on('protocol', ({ protocol, peerId, code, payload }) => {
+  /* handle ETH/SNAP not answered in the worker */
 })
+
+client.connectPeer({ id: remoteId, address: '127.0.0.1', udpPort: 30304, tcpPort: 30304 })
+client.stop()
 ```
 
-### API
+**Try it locally (monorepo).** From `packages/devp2p`, run **`npm run threaded:smoke`**. That script starts a real `worker_threads` Worker plus an in-process peer, connects them on localhost, prints a telemetry snapshot, sends a SNAP `GET_ACCOUNT_RANGE`, and checks the Good Citizen empty `ACCOUNT_RANGE` reply. No mainnet sockets required.
 
-#### `RLPx` (extends `EventEmitter`)
+Use **`inProcess: true`** (MessageChannel host, no Worker file) in unit tests. For a real Worker, pass **`resolveThreadedNetworkModuleUrl(import.meta.url)`** as the second argument (works against TypeScript sources in this repo and against `dist/esm` after **`npm run build`**).
 
-Manages the handshake (`ECIES`) and the handling of the peer communication (`Peer`).
+### Layer guide
 
-##### `new RLPx(privateKey, options)`
+| Layer | Module | Typical use |
+| --- | --- | --- |
+| Discovery | `DPT` | Kademlia peer table, UDP `ping` / `findNeighbours`, ban list |
+| DNS | `DNS` / `ENR` | EIP-1459 ENR tree lookup (`DPT` options `shouldGetDnsPeers`, …) |
+| Transport | `RLPx`, `Peer` | Handshake, multiplex subprotocols, base `ping` / `pong` |
+| Wire | `ETH`, `SNAP` | `sendStatus`, `sendMessage`, `EthMessageCodes`, `SnapMessageCodes` |
 
-Creates new RLPx object
+**Discovery** — see [`examples/dpt.ts`](./examples/dpt.ts) (CI) and [`examples/manual/dptDiscovery.ts`](./examples/manual/dptDiscovery.ts) (bootstrap loop). Bootstrap from `@ethereumjs/common`:
 
-- `privateKey` - Key for message encoding/signing.
-- `options.timeout` - Peer `ping` timeout in ms (default: `10s`).
-- `options.maxPeers` - Max number of peer connections (default: `10`).
-- `options.clientId` - Client ID string (default example: `ethereumjs-devp2p/v2.1.3/darwin-x64/nodejs`).
-- `options.remoteClientIdFilter` - Optional list of client ID filter strings (e.g. `['go1.5', 'quorum']`).
-- `options.capabilities` - Upper layer protocol capabilities, e.g. `[devp2p.ETH.eth63, devp2p.ETH.eth62]`.
-- `options.listenPort` - The listening port for the server or `null` for default.
-- `options.dpt` - `DPT` object for the peers to connect to (default: `null`, no `DPT` peer management).
-- `options.common` - An instance of [`@ethereumjs/common`](https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/common).
+```ts
+import { Common, Mainnet } from '@ethereumjs/common'
 
-#### `rlpx.connect(peer)` (`async`)
-
-Manually connect to peer without `DPT`.
-
-- `peer` - Peer to connect to, format `{ id: PEER_ID, address: PEER_ADDRESS, port: PEER_PORT }`.
-
-For other connection/utility functions like `listen`, `getPeers` see [./src/rlpx/rlpx.ts](./src/rlpx/rlpx.ts).
-
-### Events
-
-Events emitted:
-
-| Event        |          Description           |
-| ------------ | :----------------------------: |
-| peer:added   | Handshake with peer successful |
-| peer:removed |     Disconnected from peer     |
-| peer:error   |    Error connecting to peer    |
-| listening    |     Forwarded from server      |
-| close        |     Forwarded from server      |
-| error        |     Forwarded from server      |
-
-### Reference
-
-- [RLPx: Cryptographic Network & Transport Protocol](https://github.com/ethereum/devp2p/blob/master/rlpx.md)
-- [devp2p wire protocol](https://github.com/ethereum/wiki/wiki/%C3%90%CE%9EVp2p-Wire-Protocol)
-
-## Ethereum Wire Protocol (ETH)
-
-Upper layer protocol for exchanging Ethereum network data like block headers or transactions with a node, see [./src/eth/](./src/eth/).
-
-### Usage
-
-Send the initial status message with `sendStatus()`, then wait for the corresponding `status` message
-to arrive to start the communication.
-
-```
-eth.once('status', () => {
-  // Send an initial message
-  eth.sendMessage()
-})
+const bootnodes = new Common({ chain: Mainnet }).bootstrapNodes()
+for (const node of bootnodes) {
+  dpt
+    .bootstrap({ address: node.ip, udpPort: node.port, tcpPort: node.port })
+    .catch((err) => console.error(`DPT bootstrap error: ${err}`))
+}
 ```
 
-Wait for follow-up messages to arrive, send your responses.
+**Transport** — see [`examples/rlpx.ts`](./examples/rlpx.ts) for `RLPx` + `Common` + ETH capabilities.
 
-```
-eth.on('message', async (code, payload) => {
-  if (code === devp2p.ETH.MESSAGE_CODES.NEW_BLOCK_HASHES) {
-    // Do something with your new block hashes :-)
-  }
-})
-```
+**ETH / SNAP** — after RLPx negotiates a subprotocol, call `eth.sendStatus()` and wait for `status` before other ETH messages. Full mainnet-style flow: [`examples/manual/peerCommunication.ts`](./examples/manual/peerCommunication.ts).
 
-See the `peer-communication.ts` example for a more detailed use case.
+### Events (summary)
 
-### API
+| Emitter | Events |
+| --- | --- |
+| `dpt.events` | `peer:added`, `peer:removed`, `peer:new`, `listening`, `close`, `error` |
+| `rlpx.events` | `peer:added`, `peer:removed`, `peer:error`, `listening`, `close`, `error` |
+| `eth.events` | `status`, `message` |
+| `peer.events` | `error`, `ping`, `pong` (base protocol) |
 
-#### `ETH` (extends `EventEmitter`)
+## Examples
 
-Handles the different message types like `NEW_BLOCK_HASHES` or `GET_NODE_DATA` (see `MESSAGE_CODES`) for
-a complete list. Currently protocol versions `PV62` and `PV63` are supported.
+| Example | Role |
+| --- | --- |
+| [`dpt.ts`](./examples/dpt.ts) | Minimal DPT setup and discovery events (CI) |
+| [`rlpx.ts`](./examples/rlpx.ts) | RLPx with `Common` and ETH capabilities (CI) |
+| [`manual/dptDiscovery.ts`](./examples/manual/dptDiscovery.ts) | Bootstrap against mainnet bootnodes |
+| [`manual/peerCommunication.ts`](./examples/manual/peerCommunication.ts) | Full DPT + RLPx + ETH exchange against live peers |
 
-##### `new ETH(privateKey, options)`
-
-Normally not instantiated directly but created as a `SubProtocol` in the `Peer` object.
-
-- `version` - The protocol version for communicating, e.g. `63`.
-- `peer` - `Peer` object to communicate with.
-- `send` - Wrapped `peer.sendMessage()` function where the communication is routed to.
-
-#### `eth.sendStatus(status)`
-
-Send initial status message.
-
-- `status` - Status message to send, format `{td: TOTAL_DIFFICULTY_BUFFER, bestHash: BEST_HASH_BUFFER, genesisHash: GENESIS_HASH_BUFFER }`, `networkId` (respectively `chainId`) is taken from the `Common` instance
-
-#### `eth.sendMessage(code, payload)`
-
-Send initial status message.
-
-- `code` - The message code, see `MESSAGE_CODES` for available message types.
-- `payload` - Payload as a list, will be rlp-encoded.
-
-### Events
-
-Events emitted:
-
-| Event   |     Description      |
-| ------- | :------------------: |
-| message |   Message received   |
-| status  | Status info received |
-
-### Reference
-
-- [Ethereum wire protocol](https://github.com/ethereum/wiki/wiki/Ethereum-Wire-Protocol)
-
-## Light Ethereum Subprotocol (LES)
-
-Upper layer protocol used by light clients, see [./src/les/](./src/les/).
-
-### Usage
-
-Send the initial status message with `sendStatus()`, then wait for the corresponding `status` message
-to arrive to start the communication.
-
-```
-les.once('status', () => {
-  // Send an initial message
-  les.sendMessage()
-})
+```shell
+npm run examples
 ```
 
-Wait for follow-up messages to arrive, send your responses.
+Manual live acceptance (not CI; needs outbound UDP/TCP):
 
-```
-les.on('message', async (code, payload) => {
-  if (code === devp2p.LES.MESSAGE_CODES.BLOCK_HEADERS) {
-    // Do something with your new block headers :-)
-  }
-})
+```shell
+npm run accept:live -- eth68
 ```
 
-See the `peer-communication-les.ts` example for a more detailed use case.
+Manual examples need network access:
 
-### API
-
-#### `LES` (extends `EventEmitter`)
-
-Handles the different message types like `BLOCK_HEADERS` or `GET_PROOFS_V2` (see `MESSAGE_CODES`) for
-a complete list. Currently protocol version `LES/2` running in client-mode is supported.
-
-##### `new LES(privateKey, options)`
-
-Normally not instantiated directly but created as a `SubProtocol` in the `Peer` object.
-
-- `version` - The protocol version for communicating, e.g. `2`.
-- `peer` - `Peer` object to communicate with.
-- `send` - Wrapped `peer.sendMessage()` function where the communication is routed to.
-
-#### `les.sendStatus(status)`
-
-Send initial status message.
-
-- `status` - Status message to send, format `{ headTd: TOTAL_DIFFICULTY_BUFFER, headHash: HEAD_HASH_BUFFER, headNum: HEAD_NUM_BUFFER, genesisHash: GENESIS_HASH_BUFFER }`, `networkId` (respectively `chainId`) is taken from the `Common` instance
-
-#### `les.sendMessage(code, reqId, payload)`
-
-Send initial status message.
-
-- `code` - The message code, see `MESSAGE_CODES` for available message types.
-- `reqId` - Request ID, will be echoed back on response.
-- `payload` - Payload as a list, will be rlp-encoded.
-
-### Events
-
-Events emitted:
-
-| Event   |     Description      |
-| ------- | :------------------: |
-| message |   Message received   |
-| status  | Status info received |
-
-### Reference
-
-- [Light client protocol](https://github.com/ethereum/wiki/wiki/Light-client-protocol)
-
-## Browser
-
-While it's possible to bundle this package for the browser, some features do not work:
-+ EIP-1459 (DNS Peer Discovery) is disabled due to the absence of a standard polyfill for Node's `dns`
-module. DNS discovery mode can be toggled on/off via the DPTOption `shouldGetDnsPeers` ("false"
-by default).
-
-## Tests
-
-There are unit tests in the `test/` directory which can be run with:
-
+```shell
+DEBUG=ethjs,devp2p:* npx tsx ./examples/manual/peerCommunication.ts
 ```
-npm run test
+
+## JSON scenarios
+
+[`scenarios/`](./scenarios/) holds declarative specs (DPT, RLPx, ETH, SNAP) executed in-process by the lab **`ScenarioRunner`**. They replace the old dedicated simulator test files.
+
+```shell
+npm run test:scenarios
+npx devp2p scenario list
+npx devp2p scenario run scenarios/eth-status-success.json
 ```
 
 ## Debugging
 
-This library uses [debug](https://github.com/visionmedia/debug) debugging utility package.
+Uses the [`debug`](https://github.com/visionmedia/debug) package. Include **`ethjs`** in **`DEBUG`** or no devp2p loggers run.
 
-For the debugging output to show up, set the `DEBUG` environment variable (e.g. in Linux/Mac OS:
-`export DEBUG=*,-babel`).
-
-Use the `DEBUG` environment variable to active the logger output you are interested in, e.g.:
-
-DEBUG=devp2p:dpt:\*,devp2p:eth node -r ts-node/register [YOUR_SCRIPT_TO_RUN.ts]
-
-For more verbose output on logging (e.g. to output the entire msg payload) use the `verbose` logger
-in addition:
-
-DEBUG=devp2p:dpt:\*,devp2p:eth,verbose node -r ts-node/register [YOUR_SCRIPT_TO_RUN.ts]
-
-Exemplary logging output:
-
-```
-Add peer: 52.3.158.184:30303 Geth/v1.7.3-unstable-479aa61f/linux-amd64/go1.9 (eth63) (total: 2)
-  devp2p:rlpx:peer Received body 52.169.42.101:30303 01c110 +133ms
-  devp2p:rlpx:peer Message code: 1 - 0 = 1 +0ms
-  devp2p:rlpx refill connections.. queue size: 0, open slots: 20 +1ms
-  devp2p:rlpx 52.169.42.101:30303 disconnect, reason: 16 +1ms
-Remove peer: 52.169.42.101:30303 (peer disconnect, reason code: 16) (total: 1)
+```shell
+DEBUG=ethjs,devp2p:dpt:*,devp2p:rlpx:peer,devp2p:eth npx tsx ./examples/manual/peerCommunication.ts
 ```
 
-## Docs
+| Logger | Focus |
+| --- | --- |
+| `devp2p:dpt` / `devp2p:dpt:server` | Discovery UDP |
+| `devp2p:dns:dns` | DNS ENR discovery |
+| `devp2p:rlpx` / `devp2p:rlpx:peer` | RLPx framing and HELLO / PING / DISCONNECT |
+| `devp2p:eth` | ETH message names (e.g. `devp2p:eth:GET_BLOCK_HEADERS`) |
+| `devp2p:FIRST_PEER` | Limit traffic to the first successful subprotocol peer |
+| IP filter | e.g. `devp2p:3.209.45.79` |
 
-For a complete API reference see the generated [documentation](./docs).
+Add **`verbose`** for full payload dumps. DNS integration tests: set **`DEVP2P_DNS_INTEGRATION=1`**.
+
+## API reference
+
+Full signatures and options: generated **[TypeDoc](./docs)**.
+
+Main exports from `@ethereumjs/devp2p`:
+
+| Export | Role |
+| --- | --- |
+| `DPT` | Discovery and peer table |
+| `RLPx`, `Peer` | Transport |
+| `ETH`, `EthMessageCodes` | Ethereum wire subprotocol |
+| `SNAP`, `SnapMessageCodes` | Snap sync subprotocol |
+| `DNS`, `ENR` | DNS discovery helpers |
+| `genPrivateKey`, `pk2id`, `id2pk`, `devp2pDebug` | Keys and debug namespace |
+
+Implementation entrypoints: [`src/dpt/`](./src/dpt/), [`src/rlpx/`](./src/rlpx/), [`src/protocol/`](./src/protocol/), [`src/dns/`](./src/dns/). Lab-only code under [`src/lab/`](./src/lab/) powers the CLI and scenarios (not required for library consumers).
 
 ## Developer
 
-### Diagram Updates
+**CJS and ESM** — `dist/cjs` and `dist/esm`; see `package.json` `exports`.
 
-To update the structure diagram files in the root folder open the `devp2p.drawio` file in [draw.io](https://draw.io/), make your changes, and open a PR with the updated files. Export `svg` and `png` with `border` `width=20` and `transparency=false`. For `png` go to "Advanced" and select `300 DPI`.
+```ts
+import { DPT, RLPx, ETH } from '@ethereumjs/devp2p'
+```
 
-## General References
+Local **`/lab/`** (CLI data) is gitignored; do not confuse with **`src/lab/`** sources.
 
-### Other Implementations
+**Diagram** — edit `devp2p.drawio`, export `diagram/devp2p.svg` / `.png` (border 20px, 300 DPI for PNG).
 
-The following is a list of major implementations of the `devp2p` stack in other languages:
+**Monorepo** — [`DEVELOPER.md`](../../DEVELOPER.md), package workflow **Devp2p** on CI.
 
-- Python: [pydevp2p](https://github.com/ethereum/pydevp2p)
-- Go: [Go Ethereum](https://github.com/ethereum/go-ethereum/tree/master/p2p)
-- Elixir: [Exthereum](https://github.com/exthereum/exth_crypto)
+## Protocol references
 
-### Links
+- [Ethereum networking layer (discovery overview)](https://ethereum.org/en/developers/docs/networking-layer/)
+- [devp2p RLPx](https://github.com/ethereum/devp2p/blob/master/rlpx.md)
+- [Ethereum wire protocol (ETH)](https://github.com/ethereum/devp2p/blob/master/caps/eth.md)
+- [Snap protocol](https://github.com/ethereum/devp2p/blob/master/caps/snap.md)
+- [EIP-1459 DNS discovery](https://eips.ethereum.org/EIPS/eip-1459)
 
-- [Blog article series](https://ocalog.com/post/10/) on implementing Ethereum protocol stack
+Other implementations: [go-ethereum p2p](https://github.com/ethereum/go-ethereum/tree/master/p2p), [pydevp2p](https://github.com/ethereum/pydevp2p) (historical).
+
+## EthereumJS
+
+The `EthereumJS` GitHub organization and its repositories are managed by members of the former Ethereum Foundation JavaScript team and the broader Ethereum community. If you want to join for work or carry out improvements on the libraries see the [developer docs](../../DEVELOPER.md) for an overview of current standards and tools and review our [code of conduct](../../CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT
+[MIT](https://opensource.org/licenses/MIT)
 
 [discord-badge]: https://img.shields.io/static/v1?logo=discord&label=discord&message=Join&color=blue
 [discord-link]: https://discord.gg/TNwARpR
@@ -420,7 +430,7 @@ MIT
 [devp2p-npm-link]: https://www.npmjs.org/package/ethereumjs-devp2p
 [devp2p-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20devp2p?label=issues
 [devp2p-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+devp2p"
-[devp2p-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Devp2p%20Test/badge.svg
-[devp2p-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Devp2p+Test%22
+[devp2p-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Devp2p/badge.svg
+[devp2p-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Devp2p%22
 [devp2p-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=devp2p
 [devp2p-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/devp2p

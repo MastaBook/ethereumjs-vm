@@ -1,0 +1,118 @@
+import type { ParamsDict } from '@ethereumjs/common'
+import { SYSTEM_ADDRESS } from '@ethereumjs/util'
+
+/** Default VM parameters keyed by EIP, passed to {@link @ethereumjs/common!Common} via `opts.params`. */
+export const paramsVM: ParamsDict = {
+  /**
+   * Frontier/Chainstart
+   */
+  1: {
+    // gasConfig
+    maxRefundQuotient: 2, // Maximum refund quotient; max tx refund is min(tx.gasUsed/maxRefundQuotient, tx.gasRefund)
+    blobGasPerBlob: 0,
+    maxBlobGasPerBlock: 0,
+    targetBlobGasPerBlock: 0,
+    // pow
+    minerReward: '5000000000000000000', // the amount a miner get rewarded for mining a block
+  },
+  /**
+.  * Byzantium HF Meta EIP
+.  */
+  609: {
+    // pow
+    minerReward: '3000000000000000000', // the amount a miner get rewarded for mining a block
+  },
+  /**
+.  * Constantinople HF Meta EIP
+.  */
+  1013: {
+    // pow
+    minerReward: '2000000000000000000', // The amount a miner gets rewarded for mining a block
+  },
+  /**
+.  * Fee market change for ETH 1.0 chain
+.  */
+  1559: {
+    // gasConfig
+    elasticityMultiplier: 2, // Maximum block gas target elasticity
+    initialBaseFee: 1000000000, // Initial base fee on first EIP1559 block
+  },
+  /**
+   * Save historical block hashes in state (Verkle related usage, UNSTABLE)
+   */
+  2935: {
+    // config
+    historyStorageAddress: '0x0000F90827F1C53A10CB7A02335B175320002935', // The address where the historical blockhashes are stored
+    historyServeWindow: 8191, // The amount of blocks to be served by the historical blockhash contract
+    systemAddress: SYSTEM_ADDRESS, // The system address
+    systemCallGasLimit: 30_000_000, // Pre-tx system calls (shared with EIP-4788 path in runBlock)
+  },
+  /**
+.  * Reduction in refunds
+.  */
+  3529: {
+    // gasConfig
+    maxRefundQuotient: 5, // Maximum refund quotient; max tx refund is min(tx.gasUsed/maxRefundQuotient, tx.gasRefund)
+  },
+  /**
+.  * Shard Blob Transactions
+.  */
+  4844: {
+    // gasConfig
+    targetBlobGasPerBlock: 393216, // The target blob gas consumed per block
+    blobGasPerBlob: 131072, // The base fee for blob gas per blob
+    maxBlobGasPerBlock: 786432, // The max blob gas allowable per block
+    blobGasPriceUpdateFraction: 3338477, // The denominator used in the exponential when calculating a blob gas price
+    // gasPrices
+    minBlobGas: 1, // The minimum fee per blob gas
+  },
+  /**
+.  * Beacon block root in the EVM
+.  */
+  4788: {
+    // config
+    historicalRootsLength: 8191, // The modulo parameter of the beaconroot ring buffer in the beaconroot stateful precompile
+    systemAddress: SYSTEM_ADDRESS, // Pre-tx beacon-root update (SYSTEM_ADDRESS → predeploy)
+    systemCallGasLimit: 30_000_000,
+  },
+  /**
+   * Execution layer triggerable withdrawals (experimental)
+   */
+  7002: {
+    // config
+    systemAddress: SYSTEM_ADDRESS, // The system address to perform operations on the withdrawal requests predeploy address
+    // See: https://github.com/ethereum/EIPs/pull/8934/files
+    withdrawalRequestPredeployAddress: '0x00000961EF480EB55E80D19AD83579A64C007002', // Address of the validator excess address
+    systemCallGasLimit: 30_000_000, // EIP-7002 system call gas limit
+  },
+
+  /**
+   * Increase the MAX_EFFECTIVE_BALANCE -> Execution layer triggered consolidations (experimental)
+   */
+  7251: {
+    // config
+    systemAddress: SYSTEM_ADDRESS, // The system address to perform operations on the consolidation requests predeploy address
+    // See: https://github.com/ethereum/EIPs/pull/8934/files
+    consolidationRequestPredeployAddress: '0x0000BBDDC7CE488642FB579F8B00F3A590007251', // Address of the consolidations contract
+    systemCallGasLimit: 30_000_000, // EIP-7251 system call gas limit
+  },
+  /**
+.  * Shard Blob Transactions
+.  */
+  7691: {
+    // gasConfig
+    targetBlobGasPerBlock: 786432, // The target blob gas consumed per block
+    maxBlobGasPerBlock: 1179648, // The max blob gas allowable per block
+    blobGasPriceUpdateFraction: 5007716, // The denominator used in the exponential when calculating a blob gas price
+  },
+  /**
+   * Builder execution requests (Amsterdam, experimental)
+   */
+  8282: {
+    // config
+    systemAddress: SYSTEM_ADDRESS, // The system address to perform operations on the builder request contracts
+    builderDepositContractAddress: '0x0000BFF46984E3725691FA540A8C7589300D8282', // Address of the builder deposit contract (glamsterdam-devnet v7)
+    builderExitContractAddress: '0x000064D678505AD48F8CCB093BC65613800E8282', // Address of the builder exit contract (glamsterdam-devnet v7)
+    systemCallGasLimit: 30_000_000, // EIP-8282 system call gas limit
+  },
+}

@@ -1,0 +1,98 @@
+import { Account, Address, equalsBytes, hexToBytes } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
+
+import { AccountCache, CacheType } from '../../src/cache/index.ts'
+import { createAccountWithDefaults } from '../util.ts'
+
+describe('[StateManager/AccountCache]: initialization', () => {
+  for (const type of [CacheType.LRU, CacheType.ORDERED_MAP]) {
+    it(`initializes`, async () => {
+      const cache = new AccountCache({ size: 100, type })
+
+      assert.strictEqual(cache._checkpoints, 0, 'initializes given trie')
+    })
+  }
+})
+
+describe('[StateManager/AccountCache]: put and get account', () => {
+  for (const type of [CacheType.LRU, CacheType.ORDERED_MAP]) {
+    const cache = new AccountCache({ size: 100, type })
+
+    const addr = new Address(hexToBytes(`0x${'10'.repeat(20)}`))
+    const acc: Account = createAccountWithDefaults(BigInt(1), BigInt(0xff11))
+    const accRLP = acc.serialize()
+
+    it('returns undefined for CacheElement if account not present in the cache', async () => {
+      const elem = cache.get(addr)
+      assert.isTrue(elem === undefined)
+    })
+
+    it(`puts account`, async () => {
+      cache.put(addr, acc)
+      const elem = cache.get(addr)
+      assert.isTrue(elem !== undefined && elem.accountRLP && equalsBytes(elem.accountRLP, accRLP))
+    })
+
+    it(`flushes cached accounts`, async () => {
+      const items = cache.flush()
+      assert.strictEqual(items.length, 1)
+    })
+
+    it(`deletes account from cache`, async () => {
+      cache.del(addr)
+
+      const elem = cache.get(addr)
+      assert.isTrue(elem !== undefined && elem.accountRLP === undefined)
+    })
+  }
+})
+
+describe('[StateManager/AccountCache]: checkpointing', () => {
+  for (const type of [CacheType.LRU, CacheType.ORDERED_MAP]) {
+    const cache = new AccountCache({ size: 100, type })
+
+    const addr = new Address(hexToBytes(`0x${'10'.repeat(20)}`))
+    const acc = createAccountWithDefaults(BigInt(1), BigInt(0xff11))
+    const accRLP = acc.serialize()
+
+    const updatedAcc = createAccountWithDefaults(BigInt(0x00), BigInt(0xff00))
+    const updatedAccRLP = updatedAcc.serialize()
+
+    it(`reverts to correct state`, async () => {
+      cache.put(addr, acc)
+      cache.checkpoint()
+      cache.put(addr, updatedAcc)
+
+      let elem = cache.get(addr)
+      assert.isTrue(
+        elem !== undefined && elem.accountRLP && equalsBytes(elem.accountRLP, updatedAccRLP),
+      )
+
+      cache.revert()
+
+      elem = cache.get(addr)
+      assert.isTrue(elem !== undefined && elem.accountRLP && equalsBytes(elem.accountRLP, accRLP))
+    })
+
+    it(`uses outer revert`, async () => {
+      const cache = new AccountCache({ size: 100, type: CacheType.LRU })
+
+      const account1 = new Account(undefined, 1n)
+      cache.checkpoint()
+      cache.put(addr, account1)
+      cache.checkpoint()
+      cache.put(addr, account1)
+      cache.commit()
+      cache.revert()
+      const accCmp = cache.get(addr)
+      assert.isUndefined(accCmp)
+    })
+
+    it(`cache clearing`, async () => {
+      const cache = new AccountCache({ size: 100, type: CacheType.LRU })
+      cache.put(addr, acc)
+      cache.clear()
+      assert.strictEqual(cache.size(), 0, 'should delete cache objects with clear=true')
+    })
+  }
+})

@@ -1,97 +1,108 @@
-import tape from 'tape'
-import Common from '@ethereumjs/common'
-import { BlockHeader } from '../src/header'
-import { Address } from 'ethereumjs-util'
+import { Common, Hardfork } from '@ethereumjs/common'
+import { createZeroAddress } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
 
-tape('[Header]: Clique PoA Functionality', function (t) {
-  const common = new Common({ chain: 'rinkeby', hardfork: 'chainstart' })
+import {
+  cliqueEpochTransitionSigners,
+  cliqueExtraSeal,
+  cliqueExtraVanity,
+  cliqueIsEpochTransition,
+  cliqueSigner,
+  cliqueVerifySignature,
+  createBlockHeader,
+  createSealedCliqueBlockHeader,
+} from '../src/index.ts'
 
-  t.test('Header Data', function (st) {
-    let header = BlockHeader.fromHeaderData({ number: 1 })
-    st.throws(() => {
-      header.cliqueIsEpochTransition()
-    }, 'cliqueIsEpochTransition() -> should throw on PoW networks')
+import { SIGNER_A, goerliChainConfig } from '@ethereumjs/testdata'
 
-    header = BlockHeader.genesis({}, { common })
-    st.ok(
-      header.cliqueIsEpochTransition(),
-      'cliqueIsEpochTransition() -> should indicate an epoch transition for the genesis block'
+describe('[Header]: Clique PoA Functionality', () => {
+  const common = new Common({ chain: goerliChainConfig, hardfork: Hardfork.Chainstart })
+
+  it('Header Data', () => {
+    let header = createBlockHeader({ number: 1 })
+    assert.throws(
+      () => {
+        cliqueIsEpochTransition(header)
+      },
+      undefined,
+      undefined,
+      'cliqueIsEpochTransition() -> should throw on PoW networks',
     )
 
-    header = BlockHeader.fromHeaderData({ number: 1, extraData: Buffer.alloc(97) }, { common })
-    st.notOk(
-      header.cliqueIsEpochTransition(),
-      'cliqueIsEpochTransition() -> should correctly identify a non-epoch block'
+    header = createBlockHeader({ extraData: new Uint8Array(97) }, { common })
+    assert.isTrue(
+      cliqueIsEpochTransition(header),
+      'cliqueIsEpochTransition() -> should indicate an epoch transition for the genesis block',
     )
-    st.deepEqual(
-      header.cliqueExtraVanity(),
-      Buffer.alloc(32),
-      'cliqueExtraVanity() -> should return correct extra vanity value'
-    )
-    st.deepEqual(
-      header.cliqueExtraSeal(),
-      Buffer.alloc(65),
-      'cliqueExtraSeal() -> should return correct extra seal value'
-    )
-    st.throws(() => {
-      header.cliqueEpochTransitionSigners()
-    }, 'cliqueEpochTransitionSigners() -> should throw on non-epch block')
 
-    header = BlockHeader.fromHeaderData({ number: 60000, extraData: Buffer.alloc(137) }, { common })
-    st.ok(
-      header.cliqueIsEpochTransition(),
-      'cliqueIsEpochTransition() -> should correctly identify an epoch block'
+    header = createBlockHeader({ number: 1, extraData: new Uint8Array(97) }, { common })
+    assert.isFalse(
+      cliqueIsEpochTransition(header),
+      'cliqueIsEpochTransition() -> should correctly identify a non-epoch block',
     )
-    st.deepEqual(
-      header.cliqueExtraVanity(),
-      Buffer.alloc(32),
-      'cliqueExtraVanity() -> should return correct extra vanity value'
+    assert.deepEqual(
+      cliqueExtraVanity(header),
+      new Uint8Array(32),
+      'cliqueExtraVanity() -> should return correct extra vanity value',
     )
-    st.deepEqual(
-      header.cliqueExtraSeal(),
-      Buffer.alloc(65),
-      'cliqueExtraSeal() -> should return correct extra seal value'
+    assert.deepEqual(
+      cliqueExtraSeal(header),
+      new Uint8Array(65),
+      'cliqueExtraSeal() -> should return correct extra seal value',
+    )
+    assert.throws(
+      () => {
+        cliqueEpochTransitionSigners(header)
+      },
+      undefined,
+      undefined,
+      'cliqueEpochTransitionSigners() -> should throw on non-epoch block',
+    )
+
+    header = createBlockHeader({ number: 60000, extraData: new Uint8Array(137) }, { common })
+    assert.isTrue(
+      cliqueIsEpochTransition(header),
+      'cliqueIsEpochTransition() -> should correctly identify an epoch block',
+    )
+    assert.deepEqual(
+      cliqueExtraVanity(header),
+      new Uint8Array(32),
+      'cliqueExtraVanity() -> should return correct extra vanity value',
+    )
+    assert.deepEqual(
+      cliqueExtraSeal(header),
+      new Uint8Array(65),
+      'cliqueExtraSeal() -> should return correct extra seal value',
     )
     const msg =
       'cliqueEpochTransitionSigners() -> should return the correct epoch transition signer list on epoch block'
-    st.deepEqual(header.cliqueEpochTransitionSigners(), [Address.zero(), Address.zero()], msg)
-
-    st.end()
+    assert.deepEqual(
+      cliqueEpochTransitionSigners(header),
+      [createZeroAddress(), createZeroAddress()],
+      msg,
+    )
   })
 
-  type Signer = {
-    address: Address
-    privateKey: Buffer
-    publicKey: Buffer
-  }
+  it('Signing', () => {
+    const cliqueSignerKey = SIGNER_A.privateKey
 
-  const A: Signer = {
-    address: new Address(Buffer.from('0b90087d864e82a284dca15923f3776de6bb016f', 'hex')),
-    privateKey: Buffer.from(
-      '64bf9cc30328b0e42387b3c82c614e6386259136235e20c1357bd11cdee86993',
-      'hex'
-    ),
-    publicKey: Buffer.from(
-      '40b2ebdf4b53206d2d3d3d59e7e2f13b1ea68305aec71d5d24cefe7f24ecae886d241f9267f04702d7f693655eb7b4aa23f30dcd0c3c5f2b970aad7c8a828195',
-      'hex'
-    ),
-  }
-
-  t.test('Signing', function (st) {
-    const cliqueSigner = A.privateKey
-
-    let header = BlockHeader.fromHeaderData({ number: 1 }, { common, freeze: false, cliqueSigner })
-
-    st.equal(header.extraData.length, 97)
-    st.ok(header.cliqueVerifySignature([A.address]), 'should verify signature')
-    st.ok(header.cliqueSigner().equals(A.address), 'should recover the correct signer address')
-
-    header = BlockHeader.fromHeaderData({}, { common })
-    st.ok(
-      header.cliqueSigner().equals(Address.zero()),
-      'should return zero address on default block'
+    let header = createSealedCliqueBlockHeader(
+      { number: 1, extraData: new Uint8Array(97) },
+      cliqueSignerKey,
+      { common, freeze: false },
     )
 
-    st.end()
+    assert.strictEqual(header.extraData.length, 97)
+    assert.isTrue(cliqueVerifySignature(header, [SIGNER_A.address]), 'should verify signature')
+    assert.isTrue(
+      cliqueSigner(header).equals(SIGNER_A.address),
+      'should recover the correct signer address',
+    )
+
+    header = createBlockHeader({ extraData: new Uint8Array(97) }, { common })
+    assert.isTrue(
+      cliqueSigner(header).equals(createZeroAddress()),
+      'should return zero address on default block',
+    )
   })
 })

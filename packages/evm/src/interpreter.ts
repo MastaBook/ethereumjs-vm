@@ -1,0 +1,1718 @@
+import { ConsensusAlgorithm } from '@ethereumjs/common'
+import {
+  Account,
+  Address,
+  BIGINT_0,
+  BIGINT_1,
+  BIGINT_2,
+  EthereumJSErrorWithoutCode,
+  KECCAK256_NULL,
+  KECCAK256_RLP,
+  MAX_UINT64,
+  bigIntToBytes,
+  bigIntToHex,
+  bytesToBigInt,
+  bytesToHex,
+  equalsBytes,
+  generateAddress,
+  generateAddress2,
+  setLengthLeft,
+  setLengthRight,
+} from '@ethereumjs/util'
+import debugDefault from 'debug'
+
+import { EIP7708_BURN_TOPIC, EIP7708_SYSTEM_ADDRESS, EIP7708_TRANSFER_TOPIC } from './eip7708.ts'
+import { isEIP8024PairImmediateValid, isEIP8024SingleImmediateValid } from './eip8024.ts'
+import { activeCostPerStateByte } from './eip8037.ts'
+import { EVMError, EVMErrorTypeString } from './errors.ts'
+import type { EVMPerformanceLogger, Timer } from './logger.ts'
+import { Memory } from './memory.ts'
+import { Message } from './message.ts'
+import {
+  type Eip7928PostTargetCallOog,
+  canAfford,
+  consumeEip7928PostTargetCallOog,
+  createNewAccountStateGasIfCharged,
+  eip7928PostTargetCreateOog,
+} from './opcodes/EIP7928.ts'
+import { opcodeImmediateByteCount } from './opcodes/immediateWidth.ts'
+import { trap } from './opcodes/index.ts'
+import { maxCallGas } from './opcodes/util.ts'
+import { Stack } from './stack.ts'
+
+import type {
+  BinaryTreeAccessWitnessInterface,
+  Common,
+  StateManagerInterface,
+} from '@ethereumjs/common'
+import type { PrefixedHexString } from '@ethereumjs/util'
+import type { EVM } from './evm.ts'
+import type { Journal } from './journal.ts'
+import type { AsyncOpHandler, Opcode, OpcodeMapEntry, SyncOpHandler } from './opcodes/index.ts'
+import type { Block, EVMMockBlockchainInterface, EVMProfilerOpts, EVMResult, Log } from './types.ts'
+
+const debugGas = debugDefault('evm:gas')
+
+function isEVMError(error: unknown): error is EVMError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'errorType' in error &&
+    error.errorType === EVMErrorTypeString
+  )
+}
+
+export interface InterpreterOpts {
+  /** Initial program counter when resuming execution */
+  pc?: number
+  /** Logs to prepend to the result (e.g. EIP-7708 ETH transfer log from message-level value transfer) */
+  initialLogs?: Log[]
+}
+
+/**
+ * Immediate (unprocessed) result of running EVM bytecode in the interpreter.
+ */
+export interface RunResult {
+  logs: Log[]
+  returnValue?: Uint8Array
+  /**
+   * Selfdestructed accounts mapped to their beneficiary
+   */
+  selfdestruct: Map<PrefixedHexString, PrefixedHexString>
+
+  /**
+   * A map which tracks which addresses were created (used in EIP 6780)
+   */
+  createdAddresses?: Set<PrefixedHexString>
+}
+
+/** Execution environment for a single interpreter frame. */
+export interface Env {
+  address: Address
+  caller: Address
+  callData: Uint8Array
+  callValue: bigint
+  code: Uint8Array
+  isStatic: boolean
+  isCreate: boolean
+  depth: number
+  gasPrice: bigint
+  origin: Address
+  block: Block
+  contract: Account
+  codeAddress: Address /* Different than address for DELEGATECALL and CALLCODE */
+  gasRefund: bigint /* Current value (at begin of the frame) of the gas refund */
+  blobVersionedHashes: PrefixedHexString[] /** Versioned hashes for blob transactions */
+  createdAddresses?: Set<string>
+  accessWitness?: BinaryTreeAccessWitnessInterface
+  chargeCodeAccesses?: boolean
+  /** Logs to prepend (e.g. EIP-7708 ETH transfer log from message-level value transfer) */
+  initialLogs?: Log[]
+}
+
+/** Mutable interpreter state updated on each opcode step. */
+export interface RunState {
+  programCounter: number
+  opCode: number
+  memory: Memory
+  memoryWordCount: bigint
+  highestMemCost: bigint
+  stack: Stack
+  code: Uint8Array
+  shouldDoJumpAnalysis: boolean
+  validJumps: Uint8Array // array of values where validJumps[index] has value 0 (default), 1 (jumpdest), 2 (beginsub)
+  cachedPushes: { [pc: number]: bigint }
+  stateManager: StateManagerInterface
+  blockchain: EVMMockBlockchainInterface
+  env: Env
+  messageGasLimit?: bigint // Cache value from `gas.ts` to save gas limit for a message call
+  /** EIP-7928 CALL post-target OOG: cleared in runStep after output is zeroed. */
+  eip7928PostTargetCallOog?: Eip7928PostTargetCallOog
+  /** EIP-7928 CREATE post-target OOG: signals the CREATE/CREATE2 handler to push 0 without executing. */
+  eip7928PostTargetCreateOog?: boolean
+  interpreter: Interpreter
+  gasRefund: bigint // Tracks the current refund
+  gasLeft: bigint // Current gas left
+  /**
+   * EIP-8037: state gas paid from `gasLeft` (spilled) in this frame,
+   * including spill merged from successful child frames. State-gas refunds
+   * credit `gasLeft` first up to this amount (LIFO), then the reservoir.
+   */
+  stateGasSpilled: bigint
+  /**
+   * EIP-8037: the new-account state gas charged by the most recent CALL
+   * opcode's gas handler; refunded if the call fails fast (depth limit /
+   * insufficient balance) before a child frame is entered.
+   */
+  lastCallNewAccountStateGas?: bigint
+  /**
+   * EIP-8037: new-account state gas charged by the most recent CREATE/CREATE2
+   * gas handler (0 if the target already has nonce or code). Refunded on
+   * fail-fast, REVERT, fresh-target halt, or success onto an already-alive
+   * account. Child exceptional halt onto a balance-only target is not
+   * refunded — see `eip8037BurnLeftoverAfterCreateHaltOntoAlive`.
+   */
+  lastCreateNewAccountStateGas?: bigint
+  /**
+   * EIP-8037: CREATE child exceptionally halted onto an already-alive
+   * (balance-only) target. The spilled NEW_ACCOUNT stays as regular gas;
+   * when this frame stops, leftover is burned and the frame exceptional-halts
+   * so the CREATE nonce bump is reverted while EIP-7928 BAL reads remain.
+   */
+  eip8037BurnLeftoverAfterCreateHaltOntoAlive?: boolean
+  returnBytes: Uint8Array /* Current bytes in the return Uint8Array. Cleared each time a CALL/CREATE is made in the current frame. */
+}
+
+/** Interpreter run outcome, including the final {@link RunState} and any exception. */
+export interface InterpreterResult {
+  runState: RunState
+  exceptionError?: EVMError
+}
+
+/** Payload emitted on each EVM `step` event during bytecode execution. */
+export interface InterpreterStep {
+  gasLeft: bigint
+  gasRefund: bigint
+  stateManager: StateManagerInterface
+  stack: bigint[]
+  pc: number
+  depth: number
+  opcode: {
+    name: string
+    fee: number
+    dynamicFee?: bigint
+    isAsync: boolean
+    code: number // The hexadecimal representation of the opcode (e.g. 0x60 for PUSH1)
+  }
+  account: Account
+  address: Address
+  memory: Uint8Array
+  memoryWordCount: bigint
+  codeAddress: Address
+  immediate?: Uint8Array // Immediate argument of the opcode
+  error?: Uint8Array // Error bytes returned if revert occurs
+  storage?: [PrefixedHexString, PrefixedHexString][]
+}
+
+/**
+ * Parses and executes EVM bytecode.
+ */
+export class Interpreter {
+  protected _vm: any
+  protected _runState: RunState
+  protected _stateManager: StateManagerInterface
+  protected common: Common
+  public _evm: EVM
+  public journal: Journal
+  _env: Env
+
+  // Keep track of this Interpreter run result
+  // TODO move into Env?
+  _result: RunResult
+
+  // Opcode debuggers (e.g. { 'push': [debug Object], 'sstore': [debug Object], ...})
+  private opDebuggers: { [key: string]: (debug: string) => void } = {}
+
+  private profilerOpts?: EVMProfilerOpts
+  private performanceLogger: EVMPerformanceLogger
+
+  // TODO remove gasLeft as constructor argument
+  constructor(
+    evm: EVM,
+    stateManager: StateManagerInterface,
+    blockchain: EVMMockBlockchainInterface,
+    env: Env,
+    gasLeft: bigint,
+    journal: Journal,
+    performanceLogs: EVMPerformanceLogger,
+    profilerOpts?: EVMProfilerOpts,
+  ) {
+    this._evm = evm
+    this._stateManager = stateManager
+    this.common = this._evm.common
+
+    if (
+      this.common.consensusType() === 'poa' &&
+      this._evm['_optsCached'].cliqueSigner === undefined
+    )
+      throw EthereumJSErrorWithoutCode(
+        'Must include cliqueSigner function if clique/poa is being used for consensus type',
+      )
+
+    this._runState = {
+      programCounter: 0,
+      opCode: 0xfe, // INVALID opcode
+      memory: new Memory(),
+      memoryWordCount: BIGINT_0,
+      highestMemCost: BIGINT_0,
+      stack: new Stack(),
+      code: new Uint8Array(0),
+      validJumps: Uint8Array.from([]),
+      cachedPushes: {},
+      stateManager: this._stateManager,
+      blockchain,
+      env,
+      shouldDoJumpAnalysis: true,
+      interpreter: this,
+      gasRefund: env.gasRefund,
+      gasLeft,
+      stateGasSpilled: BIGINT_0,
+      returnBytes: new Uint8Array(0),
+    }
+    this.journal = journal
+    this._env = env
+    this._result = {
+      logs: env.initialLogs ? [...env.initialLogs] : [],
+      returnValue: undefined,
+      selfdestruct: new Map(),
+    }
+    this.profilerOpts = profilerOpts
+    this.performanceLogger = performanceLogs
+  }
+
+  async run(code: Uint8Array, opts: InterpreterOpts = {}): Promise<InterpreterResult> {
+    this._runState.code = code
+    this._runState.programCounter = opts.pc ?? this._runState.programCounter
+    // Check that the programCounter is in range
+    const pc = this._runState.programCounter
+    if (pc !== 0 && (pc < 0 || pc >= this._runState.code.length)) {
+      throw EthereumJSErrorWithoutCode('Internal error: program counter not in range')
+    }
+
+    let err
+    let cachedOpcodes: OpcodeMapEntry[]
+    let doJumpAnalysis = true
+
+    let timer: Timer | undefined
+    let overheadTimer: Timer | undefined
+    if (this.profilerOpts?.enabled === true && this.performanceLogger.hasTimer()) {
+      timer = this.performanceLogger.pauseTimer()
+      overheadTimer = this.performanceLogger.startTimer('Overhead')
+    }
+
+    // Iterate through the given ops until something breaks or we hit STOP
+    while (this._runState.programCounter < this._runState.code.length) {
+      const programCounter = this._runState.programCounter
+      let opCode: number
+      let opCodeObj: OpcodeMapEntry | undefined
+      if (doJumpAnalysis) {
+        opCode = this._runState.code[programCounter]
+        // Only run the jump destination analysis if `code` actually contains a JUMP/JUMPI/JUMPSUB opcode
+        if (opCode === 0x56 || opCode === 0x57 || opCode === 0x5e) {
+          const { jumps, pushes, opcodesCached } = this._getValidJumpDestinations(
+            this._runState.code,
+          )
+          this._runState.validJumps = jumps
+          this._runState.cachedPushes = pushes
+          this._runState.shouldDoJumpAnalysis = false
+          cachedOpcodes = opcodesCached
+          doJumpAnalysis = false
+        }
+      } else {
+        opCodeObj = cachedOpcodes![programCounter]
+        opCode = opCodeObj.opcodeInfo.code
+      }
+
+      // if its an invalid opcode with binary activated, then check if its because of a missing code
+      // chunk in the witness, and throw appropriate error to distinguish from an actual invalid opcode
+      if (
+        opCode === 0xfe &&
+        this.common.isActivatedEIP(7864) &&
+        // is this a code loaded from state using witnesses
+        this._runState.env.chargeCodeAccesses === true
+      ) {
+        const contract = this._runState.interpreter.getAddress()
+
+        if (
+          !(await this._runState.stateManager.checkChunkWitnessPresent!(contract, programCounter))
+        ) {
+          throw Error(`Invalid witness with missing codeChunk for pc=${programCounter}`)
+        }
+      }
+
+      this._runState.opCode = opCode
+
+      try {
+        if (overheadTimer !== undefined) {
+          this.performanceLogger.pauseTimer()
+        }
+        await this.runStep(opCodeObj)
+        if (overheadTimer !== undefined) {
+          this.performanceLogger.unpauseTimer(overheadTimer)
+        }
+      } catch (e: any) {
+        // Revert access witness changes if we revert - per EIP-4762
+        this._runState.env.accessWitness?.revert()
+        if (overheadTimer !== undefined) {
+          this.performanceLogger.unpauseTimer(overheadTimer)
+        }
+        // re-throw on non-VM errors
+        if (!('errorType' in e && e.errorType === EVMErrorTypeString)) {
+          throw e
+        }
+        // STOP is not an exception
+        if (e.error !== EVMError.errorMessages.STOP) {
+          err = e
+        }
+        break
+      }
+    }
+
+    if (
+      err === undefined &&
+      this._runState.eip8037BurnLeftoverAfterCreateHaltOntoAlive === true &&
+      this._runState.gasLeft > BIGINT_0
+    ) {
+      // Consume leftover and exceptional-halt this frame so the CREATE nonce
+      // bump is journal-reverted (fill post-state keeps the pre-create nonce)
+      // while EIP-7928 BAL reads from the following SSTORE remain.
+      this._runState.gasLeft = BIGINT_0
+      err = new EVMError(EVMError.errorMessages.OUT_OF_GAS)
+    }
+
+    if (timer !== undefined) {
+      this.performanceLogger.stopTimer(overheadTimer!, 0)
+      this.performanceLogger.unpauseTimer(timer)
+    }
+
+    return {
+      runState: this._runState,
+      exceptionError: err,
+    }
+  }
+
+  /**
+   * Executes the opcode to which the program counter is pointing,
+   * reducing its base gas cost, and increments the program counter.
+   */
+  async runStep(opcodeObj?: OpcodeMapEntry): Promise<void> {
+    const opEntry = opcodeObj ?? this.lookupOpInfo(this._runState.opCode)
+    const opInfo = opEntry.opcodeInfo
+
+    let timer: Timer
+
+    if (this.profilerOpts?.enabled === true) {
+      timer = this.performanceLogger.startTimer(opInfo.name)
+    }
+
+    let gas = opInfo.feeBigInt
+
+    // Cache pre-gas memory size if doing tracing (EIP-7756)
+    const memorySizeCache = this._runState.memoryWordCount
+
+    try {
+      if (opInfo.dynamicGas) {
+        // This function updates the gas in-place.
+        // It needs the base fee, for correct gas limit calculation for the CALL opcodes
+        try {
+          gas = await opEntry.gasHandler(this._runState, gas, this.common)
+        } catch (error) {
+          // Static-gas opcodes always emit a `step` event before their gas
+          // charge can fail (the hook below runs before `useGas` and the
+          // opcode handler). Dynamic gas handlers can throw the failure
+          // themselves, before that hook runs, so emit it here for any VM
+          // error to keep tracer output consistent across both paths.
+          // Non-VM errors are genuine bugs and are re-thrown untouched.
+          if (
+            isEVMError(error) &&
+            (this._evm.events.listenerCount('step') > 0 || this._evm.DEBUG)
+          ) {
+            await this._runStepHook(gas, this.getGasLeft(), memorySizeCache)
+          }
+          throw error
+        }
+      }
+
+      if (this._evm.events.listenerCount('step') > 0 || this._evm.DEBUG) {
+        // Only run this stepHook function if there is an event listener (e.g. test runner)
+        // or if the vm is running in debug mode (to display opcode debug logs)
+        await this._runStepHook(gas, this.getGasLeft(), memorySizeCache)
+      }
+
+      if (
+        (this.common.isActivatedEIP(6800) || this.common.isActivatedEIP(7864)) &&
+        this._env.chargeCodeAccesses === true
+      ) {
+        const contract = this._runState.interpreter.getAddress()
+        const statelessGas = this._runState.env.accessWitness!.readAccountCodeChunks(
+          contract,
+          this._runState.programCounter,
+          this._runState.programCounter,
+        )
+        gas += statelessGas
+        debugGas(`codechunk accessed statelessGas=${statelessGas} (-> ${gas})`)
+      }
+
+      // Check for invalid opcode
+      if (opInfo.isInvalid) {
+        throw new EVMError(EVMError.errorMessages.INVALID_OPCODE)
+      }
+
+      // Reduce opcode's base fee
+      this.useGas(gas, opInfo)
+
+      // Advance program counter
+      this._runState.programCounter++
+
+      consumeEip7928PostTargetCallOog(this._runState)
+
+      // Execute opcode handler
+      const opFn = opEntry.opHandler
+
+      if (opInfo.isAsync) {
+        await (opFn as AsyncOpHandler).apply(null, [this._runState, this.common])
+      } else {
+        ;(opFn as SyncOpHandler).apply(null, [this._runState, this.common])
+      }
+      this._runState.env.accessWitness?.commit()
+    } finally {
+      if (this.profilerOpts?.enabled === true) {
+        this.performanceLogger.stopTimer(
+          timer!,
+          Number(gas),
+          'opcodes',
+          opInfo.fee,
+          Number(gas) - opInfo.fee,
+        )
+      }
+    }
+  }
+
+  /**
+   * Get info for an opcode from EVM's list of opcodes.
+   */
+  lookupOpInfo(op: number): OpcodeMapEntry {
+    return this._evm['_opcodeMap'][op]
+  }
+
+  async _runStepHook(dynamicFee: bigint, gasLeft: bigint, memorySize: bigint): Promise<void> {
+    const opcodeInfo = this.lookupOpInfo(this._runState.opCode).opcodeInfo
+    let error = undefined
+    let immediate = undefined
+    if (opcodeInfo.code === 0xfd) {
+      // If opcode is REVERT, read error data and return in trace
+      const [offset, length] = this._runState.stack.peek(2)
+      error = new Uint8Array(0)
+      if (length !== BIGINT_0) {
+        error = this._runState.memory.read(Number(offset), Number(length))
+      }
+    }
+
+    const immediateByteCount = opcodeImmediateByteCount(opcodeInfo.code)
+    if (immediateByteCount > 0) {
+      immediate = this._runState.code.slice(
+        this._runState.programCounter + 1,
+        this._runState.programCounter + 1 + immediateByteCount,
+      )
+    }
+
+    // Create event object for step
+    const eventObj: InterpreterStep = {
+      pc: this._runState.programCounter,
+      gasLeft,
+      gasRefund: this._runState.gasRefund,
+      opcode: {
+        name: opcodeInfo.fullName,
+        fee: opcodeInfo.fee,
+        dynamicFee,
+        isAsync: opcodeInfo.isAsync,
+        code: opcodeInfo.code,
+      },
+      stack: this._runState.stack.getStack(),
+      depth: this._env.depth,
+      address: this._env.address,
+      account: this._env.contract,
+      memory: this._runState.memory._store.slice(0, Number(memorySize) * 32),
+      memoryWordCount: memorySize,
+      codeAddress: this._env.codeAddress,
+      stateManager: this._runState.stateManager,
+      immediate,
+      error,
+    }
+
+    if (this._evm.DEBUG) {
+      // Create opTrace for debug functionality
+      let hexStack = []
+      hexStack = eventObj.stack.map((item: any) => {
+        return bigIntToHex(BigInt(item))
+      })
+
+      const name = eventObj.opcode.name
+
+      const opTrace = {
+        pc: eventObj.pc,
+        op: name,
+        gas: bigIntToHex(eventObj.gasLeft),
+        gasCost: bigIntToHex(dynamicFee),
+        stack: hexStack,
+        depth: eventObj.depth,
+      }
+
+      if (!(name in this.opDebuggers)) {
+        this.opDebuggers[name] = debugDefault(`evm:ops:${name}`)
+      }
+      this.opDebuggers[name](JSON.stringify(opTrace))
+    }
+
+    /**
+     * The `step` event for trace output.
+     *
+     * @event Event: step
+     * @property pc - Program counter before the opcode runs
+     * @property opcode - Next opcode metadata (name, fees, async flag, hex code)
+     * @property gasLeft - Gas remaining in the current frame
+     * @property gasRefund - Current refund counter
+     * @property stateManager - Active {@link @ethereumjs/common!StateManagerInterface}
+     * @property stack - Stack items as bigints
+     * @property account - Executing contract account
+     * @property address - Address of the executing account
+     * @property depth - Current call depth
+     * @property memory - EVM memory snapshot
+     * @property memoryWordCount - Memory size in 32-byte words
+     * @property codeAddress - Address whose code is running (differs under DELEGATECALL)
+     * @property immediate - Opcode immediate bytes, when present
+     * @property error - Revert data bytes, when the opcode is REVERT
+     * @property storage - Storage key/value tuples touched by the step
+     */
+    await this._evm['_emit']('step', eventObj)
+  }
+
+  // Returns all valid jump and jumpsub destinations.
+  _getValidJumpDestinations(code: Uint8Array) {
+    const jumps = new Uint8Array(code.length)
+    const pushes: { [pc: number]: bigint } = {}
+
+    const opcodesCached = Array(code.length)
+
+    for (let i = 0; i < code.length; i++) {
+      const opcode = code[i]
+      opcodesCached[i] = this.lookupOpInfo(opcode)
+      // skip over PUSH0-32 since no jump destinations in the middle of a push block
+      if (opcode <= 0x7f) {
+        if (opcode >= 0x60) {
+          const bytesToPush = opcode - 0x5f
+          let pushBytes = code.subarray(i + 1, i + opcode - 0x5e)
+          if (pushBytes.length < bytesToPush) {
+            pushBytes = setLengthRight(pushBytes, bytesToPush)
+          }
+          const push = bytesToBigInt(pushBytes)
+          pushes[i + 1] = push
+          i += bytesToPush
+        } else if (opcode === 0x5b) {
+          // Define a JUMPDEST as a 1 in the valid jumps array
+          jumps[i] = 1
+        }
+      } else if (
+        this.common.isActivatedEIP(8024) &&
+        (opcode === 0xe6 || opcode === 0xe7 || opcode === 0xe8)
+      ) {
+        const immediate = code[i + 1]
+        if (immediate === undefined) {
+          continue
+        }
+        const skipImmediate =
+          opcode === 0xe8
+            ? isEIP8024PairImmediateValid(immediate)
+            : isEIP8024SingleImmediateValid(immediate)
+        if (skipImmediate === true) {
+          i++
+        }
+      }
+    }
+    return { jumps, pushes, opcodesCached }
+  }
+
+  /**
+   * Subtracts an amount from the gas counter.
+   * @param amount - Amount of gas to consume
+   * @param context - Usage context for debugging
+   * @throws if out of gas
+   */
+  useGas(amount: bigint, context?: string | Opcode): void {
+    this._runState.gasLeft -= amount
+    if (this._evm.DEBUG) {
+      let tempString = ''
+      if (typeof context === 'string') {
+        tempString = context + ': '
+      } else if (context !== undefined) {
+        tempString = `${context.name} fee: `
+      }
+      debugGas(`${tempString}used ${amount} gas (-> ${this._runState.gasLeft})`)
+    }
+    if (this._runState.gasLeft < BIGINT_0) {
+      this._runState.gasLeft = BIGINT_0
+      trap(EVMError.errorMessages.OUT_OF_GAS)
+    }
+  }
+
+  /**
+   * Adds a positive amount to the gas counter.
+   * @param amount - Amount of gas refunded
+   * @param context - Usage context for debugging
+   */
+  refundGas(amount: bigint, context?: string): void {
+    if (this._evm.DEBUG) {
+      debugGas(
+        `${typeof context === 'string' ? context + ': ' : ''}refund ${amount} gas (-> ${
+          this._runState.gasRefund
+        })`,
+      )
+    }
+    this._runState.gasRefund += amount
+  }
+
+  /**
+   * EIP-8037: Charge state-gas. Draws from the per-tx state-gas reservoir
+   * first; if the reservoir is exhausted, the remainder is taken from the
+   * regular `gasLeft` (which may OOG). Increments `execution_state_gas_used`
+   * by the full charged amount.
+   * @param amount - Amount of state gas to charge
+   * @param context - Usage context for debugging
+   * @throws if both pools combined are insufficient (out of gas)
+   */
+  chargeStateGas(amount: bigint, context?: string): void {
+    if (amount === BIGINT_0) return
+    const evm = this._evm
+    let remaining = amount
+    if (evm.stateGasReservoir > BIGINT_0) {
+      const fromReservoir = remaining < evm.stateGasReservoir ? remaining : evm.stateGasReservoir
+      evm.stateGasReservoir -= fromReservoir
+      remaining -= fromReservoir
+    }
+    if (remaining > BIGINT_0) {
+      this.useGas(
+        remaining,
+        context !== undefined ? `state-gas spill: ${context}` : 'state-gas spill',
+      )
+      this._runState.stateGasSpilled += remaining
+    }
+    evm.executionStateGasUsed += amount
+    if (evm.DEBUG) {
+      debugGas(
+        `${context !== undefined ? context + ': ' : ''}charged ${amount} state gas (reservoir=${evm.stateGasReservoir}, executionStateGasUsed=${evm.executionStateGasUsed}, gasLeft=${this._runState.gasLeft}, spilled=${this._runState.stateGasSpilled})`,
+      )
+    }
+  }
+
+  /**
+   * EIP-8037: credit a state-gas refund to the local frame, in LIFO order.
+   * State-gas charges draw from the reservoir first and from `gasLeft` last,
+   * so refunds credit the pool charged last first: `gasLeft` up to the
+   * frame's spilled amount, then the reservoir. Decrements
+   * `execution_state_gas_used` by the full amount.
+   * @param amount - The refund amount to credit
+   * @param context - Usage context for debugging
+   */
+  creditStateGasRefund(amount: bigint, context?: string): void {
+    if (amount === BIGINT_0) return
+    const evm = this._evm
+    const runState = this._runState
+    const fromGasLeft = amount < runState.stateGasSpilled ? amount : runState.stateGasSpilled
+    runState.gasLeft += fromGasLeft
+    runState.stateGasSpilled -= fromGasLeft
+    evm.stateGasReservoir += amount - fromGasLeft
+    evm.executionStateGasUsed -= amount
+    if (evm.DEBUG) {
+      debugGas(
+        `${context !== undefined ? context + ': ' : ''}credited ${amount} state gas refund (gasLeft +${fromGasLeft}, reservoir=${evm.stateGasReservoir}, executionStateGasUsed=${evm.executionStateGasUsed})`,
+      )
+    }
+  }
+
+  /**
+   * EIP-8037: after a successful child frame, merged reservoir may repay this
+   * frame's outstanding state-gas spill (cross-frame refund path).
+   */
+  repayStateGasSpillFromReservoir(context?: string): void {
+    const spill = this._runState.stateGasSpilled
+    if (spill === BIGINT_0) return
+    const evm = this._evm
+    const repay = spill < evm.stateGasReservoir ? spill : evm.stateGasReservoir
+    if (repay === BIGINT_0) return
+    evm.stateGasReservoir -= repay
+    this._runState.stateGasSpilled -= repay
+    this._runState.gasLeft += repay
+    if (evm.DEBUG) {
+      debugGas(
+        `${context !== undefined ? context + ': ' : ''}repaid ${repay} state-gas spill from reservoir (spill=${this._runState.stateGasSpilled}, reservoir=${evm.stateGasReservoir})`,
+      )
+    }
+  }
+
+  /**
+   * EIP-8037: Refill the state-gas reservoir, e.g. on revert / exceptional
+   * halt or on SSTORE clear-back-to-zero where the slot was zero at tx start.
+   * Increments `stateGasReservoir` and decrements `execution_state_gas_used`
+   * by the same amount. Refills always go to the reservoir, regardless of
+   * whether the original charge spilled to gas_left.
+   * @param amount - Amount of state gas to refill
+   * @param context - Usage context for debugging
+   */
+  refillStateGasReservoir(amount: bigint, context?: string): void {
+    if (amount === BIGINT_0) return
+    const evm = this._evm
+    evm.stateGasReservoir += amount
+    evm.executionStateGasUsed -= amount
+    if (evm.DEBUG) {
+      debugGas(
+        `${context !== undefined ? context + ': ' : ''}refilled ${amount} state gas (reservoir=${evm.stateGasReservoir}, executionStateGasUsed=${evm.executionStateGasUsed})`,
+      )
+    }
+  }
+
+  /**
+   * Reduces amount of gas to be refunded by a positive value.
+   * @param amount - Amount to subtract from gas refunds
+   * @param context - Usage context for debugging
+   */
+  subRefund(amount: bigint, context?: string): void {
+    if (this._evm.DEBUG) {
+      debugGas(
+        `${typeof context === 'string' ? context + ': ' : ''}sub gas refund ${amount} (-> ${
+          this._runState.gasRefund
+        })`,
+      )
+    }
+    this._runState.gasRefund -= amount
+    if (this._runState.gasRefund < BIGINT_0) {
+      this._runState.gasRefund = BIGINT_0
+      trap(EVMError.errorMessages.REFUND_EXHAUSTED)
+    }
+  }
+
+  /**
+   * Increments the internal gasLeft counter. Used for adding callStipend.
+   * @param amount - Amount to add
+   */
+  addStipend(amount: bigint): void {
+    if (this._evm.DEBUG) {
+      debugGas(`add stipend ${amount} (-> ${this._runState.gasLeft})`)
+    }
+    this._runState.gasLeft += amount
+  }
+
+  /**
+   * Returns balance of the given account.
+   * @param address - Address of account
+   */
+  async getExternalBalance(address: Address): Promise<bigint> {
+    // Track address access for EIP-7928 BAL
+    if (this._evm.common.isActivatedEIP(7928)) {
+      this._evm.blockLevelAccessList?.addAddress(address.toString())
+    }
+    // shortcut if current account
+    if (address.equals(this._env.address)) {
+      return this._env.contract.balance
+    }
+
+    let account = await this._stateManager.getAccount(address)
+    if (!account) {
+      account = new Account()
+    }
+    return account.balance
+  }
+
+  /**
+   * Store 256-bit a value in memory to persistent storage.
+   */
+  async storageStore(key: Uint8Array, value: Uint8Array): Promise<void> {
+    // EIP-7928: Get the original (pre-transaction) value BEFORE storing
+    // This is needed to detect no-op writes (where new value equals original value)
+    let originalValue: Uint8Array | undefined
+    if (this._evm.common.isActivatedEIP(7928)) {
+      originalValue = await this._stateManager.originalStorageCache.get(this._env.address, key)
+    }
+
+    await this._stateManager.putStorage(this._env.address, key, value)
+
+    if (this._evm.common.isActivatedEIP(7928)) {
+      this._evm.blockLevelAccessList?.addStorageWrite(
+        this._env.address.toString(),
+        key,
+        value,
+        this._evm.blockLevelAccessList!.blockAccessIndex,
+        originalValue,
+      )
+    }
+    const account = await this._stateManager.getAccount(this._env.address)
+    if (!account) {
+      throw EthereumJSErrorWithoutCode('could not read account while persisting memory')
+    }
+    this._env.contract = account
+  }
+
+  /**
+   * Loads a 256-bit value to memory from persistent storage.
+   * @param key - Storage key
+   * @param original - If true, return the original storage value (default: false)
+   * @param trackBAL - If true, track in BAL storageReads (default: true). Set to false for
+   *                   implicit reads (e.g., SSTORE gas calculation) that should not appear in BAL.
+   */
+  async storageLoad(key: Uint8Array, original = false, trackBAL = true): Promise<Uint8Array> {
+    if (this._evm.common.isActivatedEIP(7928) && trackBAL) {
+      this._evm.blockLevelAccessList?.addStorageRead(this._env.address.toString(), key)
+    }
+    if (original) {
+      return this._stateManager.originalStorageCache.get(this._env.address, key)
+    } else {
+      return this._stateManager.getStorage(this._env.address, key)
+    }
+  }
+
+  /**
+   * Store 256-bit a value in memory to transient storage.
+   * @param address Address to use
+   * @param key Storage key
+   * @param value Storage value
+   */
+  transientStorageStore(key: Uint8Array, value: Uint8Array): void {
+    return this._evm.transientStorage.put(this._env.address, key, value)
+  }
+
+  /**
+   * Loads a 256-bit value to memory from transient storage.
+   * @param address Address to use
+   * @param key Storage key
+   */
+  transientStorageLoad(key: Uint8Array): Uint8Array {
+    return this._evm.transientStorage.get(this._env.address, key)
+  }
+
+  /**
+   * Set the returning output data for the execution.
+   * @param returnData - Output data to return
+   */
+  finish(returnData: Uint8Array): void {
+    this._result.returnValue = returnData
+    trap(EVMError.errorMessages.STOP)
+  }
+
+  /**
+   * Set the returning output data for the execution. This will halt the
+   * execution immediately and set the execution result to "reverted".
+   * @param returnData - Output data to return
+   */
+  revert(returnData: Uint8Array): void {
+    this._result.returnValue = returnData
+    trap(EVMError.errorMessages.REVERT)
+  }
+
+  /**
+   * Returns address of currently executing account.
+   */
+  getAddress(): Address {
+    return this._env.address
+  }
+
+  /**
+   * Returns balance of self.
+   */
+  getSelfBalance(): bigint {
+    return this._env.contract.balance
+  }
+
+  /**
+   * Returns the deposited value by the instruction/transaction
+   * responsible for this execution.
+   */
+  getCallValue(): bigint {
+    return this._env.callValue
+  }
+
+  /**
+   * Returns input data in current environment. This pertains to the input
+   * data passed with the message call instruction or transaction.
+   */
+  getCallData(): Uint8Array {
+    return this._env.callData
+  }
+
+  /**
+   * Returns size of input data in current environment. This pertains to the
+   * input data passed with the message call instruction or transaction.
+   */
+  getCallDataSize(): bigint {
+    return BigInt(this._env.callData.length)
+  }
+
+  /**
+   * Returns caller address. This is the address of the account
+   * that is directly responsible for this execution.
+   */
+  getCaller(): bigint {
+    return bytesToBigInt(this._env.caller.bytes)
+  }
+
+  /**
+   * Returns the size of code running in current environment.
+   */
+  getCodeSize(): bigint {
+    return BigInt(this._env.code.length)
+  }
+
+  /**
+   * Returns the code running in current environment.
+   */
+  getCode(): Uint8Array {
+    return this._env.code
+  }
+
+  /**
+   * Returns the current gasCounter.
+   */
+  getGasLeft(): bigint {
+    return this._runState.gasLeft
+  }
+
+  /**
+   * Returns size of current return data buffer. This contains the return data
+   * from the last executed call, callCode, callDelegate, callStatic or create.
+   * Note: create only fills the return data buffer in case of a failure.
+   */
+  getReturnDataSize(): bigint {
+    return BigInt(this._runState.returnBytes.length)
+  }
+
+  /**
+   * Returns the current return data buffer. This contains the return data
+   * from last executed call, callCode, callDelegate, callStatic or create.
+   * Note: create only fills the return data buffer in case of a failure.
+   */
+  getReturnData(): Uint8Array {
+    return this._runState.returnBytes
+  }
+
+  /**
+   * Returns true if the current call must be executed statically.
+   */
+  isStatic(): boolean {
+    return this._env.isStatic
+  }
+
+  /**
+   * Returns price of gas in current environment.
+   */
+  getTxGasPrice(): bigint {
+    return this._env.gasPrice
+  }
+
+  /**
+   * Returns the execution's origination address. This is the
+   * sender of original transaction; it is never an account with
+   * non-empty associated code.
+   */
+  getTxOrigin(): bigint {
+    return bytesToBigInt(this._env.origin.bytes)
+  }
+
+  /**
+   * Returns the block's number.
+   */
+  getBlockNumber(): bigint {
+    return this._env.block.header.number
+  }
+
+  /**
+   * Returns the block's beneficiary address.
+   */
+  getBlockCoinbase(): bigint {
+    let coinbase: Address
+    if (this.common.consensusAlgorithm() === ConsensusAlgorithm.Clique) {
+      coinbase = this._evm['_optsCached'].cliqueSigner!(this._env.block.header)
+    } else {
+      coinbase = this._env.block.header.coinbase
+    }
+    return bytesToBigInt(coinbase.toBytes())
+  }
+
+  /**
+   * Returns the block's timestamp.
+   */
+  getBlockTimestamp(): bigint {
+    return this._env.block.header.timestamp
+  }
+
+  /**
+   * Returns the block's difficulty.
+   */
+  getBlockDifficulty(): bigint {
+    return this._env.block.header.difficulty
+  }
+
+  /**
+   * Returns the block's prevRandao field.
+   */
+  getBlockPrevRandao(): bigint {
+    return bytesToBigInt(this._env.block.header.prevRandao)
+  }
+
+  /**
+   * Returns the block's gas limit.
+   */
+  getBlockGasLimit(): bigint {
+    return this._env.block.header.gasLimit
+  }
+
+  /**
+   * Returns the block's slot number (EIP-7843).
+   */
+  getBlockSlotNumber(): bigint {
+    if (this._env.block.header.slotNumber === undefined) {
+      throw EthereumJSErrorWithoutCode('slotNumber is not available on this block')
+    }
+    return this._env.block.header.slotNumber
+  }
+
+  /**
+   * Returns the Base Fee of the block as proposed in [EIP-3198](https://eips.ethereum.org/EIPS/eip-3198)
+   */
+  getBlockBaseFee(): bigint {
+    const baseFee = this._env.block.header.baseFeePerGas
+    if (baseFee === undefined) {
+      // Sanity check
+      throw EthereumJSErrorWithoutCode('Block has no Base Fee')
+    }
+    return baseFee
+  }
+
+  /**
+   * Returns the Blob Base Fee of the block as proposed in [EIP-7516](https://eips.ethereum.org/EIPS/eip-7516)
+   */
+  getBlobBaseFee(): bigint {
+    const blobBaseFee = this._env.block.header.getBlobGasPrice()
+    if (blobBaseFee === undefined) {
+      // Sanity check
+      throw EthereumJSErrorWithoutCode('Block has no Blob Base Fee')
+    }
+    return blobBaseFee
+  }
+
+  /**
+   * Returns the chain ID for current chain. Introduced for the
+   * CHAINID opcode proposed in [EIP-1344](https://eips.ethereum.org/EIPS/eip-1344).
+   */
+  getChainId(): bigint {
+    return this.common.chainId()
+  }
+
+  /**
+   * Sends a message with arbitrary data to a given address path.
+   */
+  async call(gasLimit: bigint, address: Address, value: bigint, data: Uint8Array): Promise<bigint> {
+    const msg = new Message({
+      caller: this._env.address,
+      gasLimit,
+      to: address,
+      value,
+      data,
+      isStatic: this._env.isStatic,
+      depth: this._env.depth + 1,
+      blobVersionedHashes: this._env.blobVersionedHashes,
+      accessWitness: this._env.accessWitness,
+    })
+
+    return this._baseCall(msg)
+  }
+
+  /**
+   * Message-call into this account with an alternative account's code.
+   */
+  async callCode(
+    gasLimit: bigint,
+    address: Address,
+    value: bigint,
+    data: Uint8Array,
+  ): Promise<bigint> {
+    const msg = new Message({
+      caller: this._env.address,
+      gasLimit,
+      to: this._env.address,
+      codeAddress: address,
+      value,
+      data,
+      isStatic: this._env.isStatic,
+      depth: this._env.depth + 1,
+      blobVersionedHashes: this._env.blobVersionedHashes,
+      accessWitness: this._env.accessWitness,
+    })
+
+    return this._baseCall(msg)
+  }
+
+  /**
+   * Sends a message with arbitrary data to a given address path, but disallow
+   * state modifications. This includes log, create, selfdestruct and call with
+   * a non-zero value.
+   */
+  async callStatic(
+    gasLimit: bigint,
+    address: Address,
+    value: bigint,
+    data: Uint8Array,
+  ): Promise<bigint> {
+    const msg = new Message({
+      caller: this._env.address,
+      gasLimit,
+      to: address,
+      value,
+      data,
+      isStatic: true,
+      depth: this._env.depth + 1,
+      blobVersionedHashes: this._env.blobVersionedHashes,
+      accessWitness: this._env.accessWitness,
+    })
+
+    return this._baseCall(msg)
+  }
+
+  /**
+   * Message-call into this account with an alternative account's code, but
+   * persisting the current values for sender and value.
+   */
+  async callDelegate(
+    gasLimit: bigint,
+    address: Address,
+    value: bigint,
+    data: Uint8Array,
+  ): Promise<bigint> {
+    const msg = new Message({
+      caller: this._env.caller,
+      gasLimit,
+      to: this._env.address,
+      codeAddress: address,
+      value,
+      data,
+      isStatic: this._env.isStatic,
+      delegatecall: true,
+      depth: this._env.depth + 1,
+      blobVersionedHashes: this._env.blobVersionedHashes,
+      accessWitness: this._env.accessWitness,
+    })
+
+    return this._baseCall(msg)
+  }
+
+  async _baseCall(msg: Message): Promise<bigint> {
+    const selfdestruct = new Map(this._result.selfdestruct)
+    msg.selfdestruct = selfdestruct
+    msg.gasRefund = this._runState.gasRefund
+
+    // empty the return data Uint8Array
+    this._runState.returnBytes = new Uint8Array(0)
+    let createdAddresses: Set<PrefixedHexString>
+    if (this.common.isActivatedEIP(6780)) {
+      createdAddresses = new Set(this._result.createdAddresses)
+      msg.createdAddresses = createdAddresses
+    }
+
+    // empty the return data Uint8Array
+    this._runState.returnBytes = new Uint8Array(0)
+
+    // Check if account has enough ether and max depth not exceeded
+    if (
+      this._env.depth >= Number(this.common.param('stackLimit')) ||
+      (msg.delegatecall !== true && this._env.contract.balance < msg.value)
+    ) {
+      // EIP-8037: the call fails fast before a child frame is entered, so
+      // the new-account state gas pre-charged at the CALL opcode is refunded.
+      const preCharged = this._runState.lastCallNewAccountStateGas ?? BIGINT_0
+      if (preCharged > BIGINT_0) {
+        this.creditStateGasRefund(preCharged, 'CALL fail-fast new_account')
+        this._runState.lastCallNewAccountStateGas = BIGINT_0
+      }
+      return BIGINT_0
+    }
+
+    const results = await this._evm.runCall({ message: msg })
+
+    if (results.execResult.logs) {
+      this._result.logs = this._result.logs.concat(results.execResult.logs)
+    }
+
+    // this should always be safe
+    this.useGas(results.execResult.executionGasUsed, 'CALL, STATICCALL, DELEGATECALL, CALLCODE')
+
+    // EIP-8037: merge the successful child frame's spilled state gas into
+    // this frame's spill tracker (LIFO refunds may credit it back to
+    // gasLeft). Failed frames return stateGasSpilled = 0. On any child
+    // failure the new-account state gas pre-charged at the CALL opcode is
+    // refunded (no account leaf persists).
+    if (this.common.isActivatedEIP(8037)) {
+      if (results.execResult.exceptionError === undefined) {
+        this._runState.stateGasSpilled += results.execResult.stateGasSpilled ?? BIGINT_0
+        this.repayStateGasSpillFromReservoir('CALL child merge')
+      }
+      const preCharged = this._runState.lastCallNewAccountStateGas ?? BIGINT_0
+      if (results.execResult.exceptionError !== undefined && preCharged > BIGINT_0) {
+        this.creditStateGasRefund(preCharged, 'CALL child-failure new_account')
+      }
+      this._runState.lastCallNewAccountStateGas = BIGINT_0
+    }
+
+    // Set return value
+    if (
+      results.execResult.returnValue !== undefined &&
+      (!results.execResult.exceptionError ||
+        results.execResult.exceptionError.error === EVMError.errorMessages.REVERT)
+    ) {
+      this._runState.returnBytes = results.execResult.returnValue
+    }
+
+    if (!results.execResult.exceptionError) {
+      for (const [addressToSelfdestructHex, beneficiaryHex] of selfdestruct) {
+        this._result.selfdestruct.set(addressToSelfdestructHex, beneficiaryHex)
+      }
+      if (this.common.isActivatedEIP(6780)) {
+        // copy over the items to result via iterator
+        for (const item of createdAddresses!) {
+          this._result.createdAddresses!.add(item)
+        }
+      }
+      // update stateRoot on current contract
+      const account = await this._stateManager.getAccount(this._env.address)
+      if (!account) {
+        throw EthereumJSErrorWithoutCode('could not read contract account')
+      }
+      this._env.contract = account
+      this._runState.gasRefund = results.execResult.gasRefund ?? BIGINT_0
+    }
+
+    return this._getReturnCode(results)
+  }
+
+  /**
+   * Creates a new contract with a given value.
+   */
+  async create(
+    gasLimit: bigint,
+    value: bigint,
+    codeToRun: Uint8Array,
+    salt?: Uint8Array,
+  ): Promise<bigint> {
+    const selfdestruct = new Map(this._result.selfdestruct)
+    const caller = this._env.address
+    const depth = this._env.depth + 1
+
+    // empty the return data buffer
+    this._runState.returnBytes = new Uint8Array(0)
+
+    // EIP-8037: helper to refund the pre-charged NEW_ACCOUNT state-gas when
+    // no new account leaf persists: the CREATE short-circuits before a child
+    // frame is spawned (depth limit, insufficient balance, EIP-2681 nonce
+    // overflow, EIP-3860 oversized initcode, collision), the creation frame
+    // REVERTs, a fresh target exceptionally-halts, or CREATE succeeds onto
+    // an already-alive account. Child exceptional halt onto a balance-only
+    // (alive) target is handled separately below — that charge is kept as
+    // regular gas so the 63/64 spill still appears on the receipt.
+    // The pre-charge happened in opcodes/gas.ts (0 if the target already had
+    // nonce or code); refunds credit this (parent) frame's pools in LIFO order.
+    const refundCreatePreCharge = (context: string): void => {
+      const preCharged = this._runState.lastCreateNewAccountStateGas ?? BIGINT_0
+      if (preCharged === BIGINT_0) return
+      this.creditStateGasRefund(preCharged, context)
+      this._runState.lastCreateNewAccountStateGas = BIGINT_0
+    }
+
+    // EELS `generic_create`: when post-target gas (incl. new-account state gas)
+    // was charged in the opcode gas step but the create aborts before target
+    // access (balance / nonce), the 63/64 grant is consumed as regular gas and
+    // state gas is not refunded. Preflight-only aborts never charged state gas.
+    const abortCreateBeforeTargetAccess = (): bigint => {
+      const preCharged = this._runState.lastCreateNewAccountStateGas ?? BIGINT_0
+      // EELS `generic_create`: when post-target gas leaves only the 63/64 grant
+      // on the frame, balance/nonce abort absorbs it as regular gas and keeps
+      // the new-account state-gas charge (EIP-8038 aborted_create_gas_boundary).
+      if (preCharged > BIGINT_0 && this.getGasLeft() === gasLimit) {
+        this.useGas(gasLimit, 'CREATE fail-fast new_account')
+        this._runState.lastCreateNewAccountStateGas = BIGINT_0
+      } else {
+        refundCreatePreCharge('CREATE fail-fast new_account')
+      }
+      return BIGINT_0
+    }
+
+    // Check if account has enough ether and max depth not exceeded
+    if (
+      this._env.depth >= Number(this.common.param('stackLimit')) ||
+      this._env.contract.balance < value
+    ) {
+      return abortCreateBeforeTargetAccess()
+    }
+
+    // EIP-2681 check
+    if (this._env.contract.nonce >= MAX_UINT64) {
+      return abortCreateBeforeTargetAccess()
+    }
+
+    // EIP-8038: warm the create target only now, after the fail-fast checks
+    // (an aborted create must not warm the address). Uses the pre-increment
+    // nonce, matching the address generated in `_executeCreate`.
+    const targetAddressBytes = salt
+      ? generateAddress2(this._env.address.bytes, salt, codeToRun)
+      : generateAddress(this._env.address.bytes, bigIntToBytes(this._env.contract.nonce))
+    if (this.common.isActivatedEIP(8038) && this.common.isActivatedEIP(2929)) {
+      this.journal.addWarmedAddress(targetAddressBytes)
+    }
+
+    if (this.common.isActivatedEIP(8038) && this.common.isActivatedEIP(8037)) {
+      const newAccountStateGas = await createNewAccountStateGasIfCharged(
+        this._runState,
+        this.common,
+        targetAddressBytes,
+      )
+      if (newAccountStateGas > BIGINT_0) {
+        if (this.common.isActivatedEIP(7928)) {
+          this._evm.blockLevelAccessList!.addAddress(bytesToHex(targetAddressBytes))
+        }
+        if (
+          this.common.isActivatedEIP(7928) &&
+          !canAfford(this._runState, BIGINT_0, newAccountStateGas)
+        ) {
+          eip7928PostTargetCreateOog(this._runState, this.common, BIGINT_0)
+        }
+        this.chargeStateGas(newAccountStateGas, 'CREATE pre-charge new_account')
+        this._runState.lastCreateNewAccountStateGas = newAccountStateGas
+      }
+      gasLimit = maxCallGas(this.getGasLeft(), this.getGasLeft(), this._runState, this.common)
+    }
+
+    this._env.contract.nonce += BIGINT_1
+    await this.journal.putAccount(this._env.address, this._env.contract)
+    if (this.common.isActivatedEIP(7928)) {
+      this._evm.blockLevelAccessList!.addNonceChange(
+        this._env.address.toString(),
+        this._env.contract.nonce,
+        this._evm.blockLevelAccessList!.blockAccessIndex,
+      )
+    }
+
+    // EELS `generic_create`: a non-deployable target (nonce / code / storage)
+    // does not spawn a child. The 63/64 grant is consumed as regular gas on
+    // this frame; new-account state gas is refunded only if it was charged
+    // (storage-only collision — EIP-7610).
+    if (this.common.isActivatedEIP(7928)) {
+      const toAccount = await this._stateManager.getAccount(new Address(targetAddressBytes))
+      if (
+        toAccount !== undefined &&
+        (toAccount.nonce > BIGINT_0 ||
+          equalsBytes(toAccount.codeHash, KECCAK256_NULL) === false ||
+          equalsBytes(toAccount.storageRoot, KECCAK256_RLP) === false)
+      ) {
+        this.useGas(gasLimit, 'CREATE collision')
+        this._evm.blockLevelAccessList!.addAddress(bytesToHex(targetAddressBytes))
+        refundCreatePreCharge('CREATE collision new_account')
+        return BIGINT_0
+      }
+    }
+
+    if (this.common.isActivatedEIP(3860)) {
+      if (
+        codeToRun.length > Number(this.common.param('maxInitCodeSize')) &&
+        this._evm.allowUnlimitedInitCodeSize === false
+      ) {
+        refundCreatePreCharge('CREATE fail-fast new_account')
+        return BIGINT_0
+      }
+    }
+
+    const message = new Message({
+      caller,
+      gasLimit,
+      value,
+      data: codeToRun,
+      salt,
+      depth,
+      selfdestruct,
+      gasRefund: this._runState.gasRefund,
+      blobVersionedHashes: this._env.blobVersionedHashes,
+      accessWitness: this._env.accessWitness,
+    })
+
+    let createdAddresses: Set<PrefixedHexString>
+    if (this.common.isActivatedEIP(6780)) {
+      createdAddresses = new Set(this._result.createdAddresses)
+      message.createdAddresses = createdAddresses
+    }
+
+    const results = await this._evm.runCall({ message })
+
+    if (results.execResult.logs) {
+      this._result.logs = this._result.logs.concat(results.execResult.logs)
+    }
+
+    // this should always be safe
+    this.useGas(results.execResult.executionGasUsed, 'CREATE')
+
+    if (this.common.isActivatedEIP(8037)) {
+      if (results.execResult.exceptionError !== undefined) {
+        // Creation frame failed: no new account leaf persists.
+        // REVERT and fail-fast / fresh-target OOG refund the pre-charge
+        // (EELS `credit_state_gas_refund` when `new_account_charged`).
+        // A child exceptional halt onto an already-alive target is the
+        // EIP-8037 spill path: we still charged NEW_ACCOUNT (balance-only
+        // is not nonce/code, so the 63/64 stipend shrinks) but EELS
+        // `new_account_charged = not is_account_alive` does not refund.
+        // Convert the spilled slice to regular gas — it already reduced
+        // gasLeft at charge time — without crediting leftover.
+        const haltedOntoAlive =
+          results.execResult.exceptionError.error !== EVMError.errorMessages.REVERT &&
+          message.createdTargetAlive === true
+        if (haltedOntoAlive) {
+          const preCharged = this._runState.lastCreateNewAccountStateGas ?? BIGINT_0
+          if (preCharged > BIGINT_0) {
+            const fromSpill =
+              preCharged < this._runState.stateGasSpilled
+                ? preCharged
+                : this._runState.stateGasSpilled
+            this._runState.stateGasSpilled -= fromSpill
+            this._evm.executionStateGasUsed -= fromSpill
+            const fromReservoir = preCharged - fromSpill
+            if (fromReservoir > BIGINT_0) {
+              this.refillStateGasReservoir(fromReservoir, 'CREATE halt onto alive reservoir')
+            }
+            this._runState.lastCreateNewAccountStateGas = BIGINT_0
+            this._runState.eip8037BurnLeftoverAfterCreateHaltOntoAlive = true
+          }
+        } else {
+          refundCreatePreCharge('CREATE failure new_account')
+        }
+      } else {
+        // Merge the successful child frame's spilled state gas into this
+        // frame's spill tracker (LIFO refunds may credit it to gasLeft).
+        this._runState.stateGasSpilled += results.execResult.stateGasSpilled ?? BIGINT_0
+        this.repayStateGasSpillFromReservoir('CREATE child merge')
+        if (message.createdTargetAlive === true) {
+          // The create target was already alive (EIP-161 non-empty): no new
+          // account leaf was added, refund the new-account state gas.
+          refundCreatePreCharge('CREATE onto alive account new_account')
+        } else {
+          // New account persisted: the pre-charge stays in
+          // executionStateGasUsed. Clear the marker so a later CREATE on this
+          // frame (e.g. CREATE2 collision) does not refund it (EELS only
+          // credits NEW_ACCOUNT when `new_account_charged` on that op).
+          this._runState.lastCreateNewAccountStateGas = BIGINT_0
+        }
+      }
+    }
+
+    // Set return buffer in case revert happened
+    if (
+      results.execResult.exceptionError &&
+      results.execResult.exceptionError.error === EVMError.errorMessages.REVERT
+    ) {
+      this._runState.returnBytes = results.execResult.returnValue
+    }
+
+    if (
+      !results.execResult.exceptionError ||
+      results.execResult.exceptionError.error === EVMError.errorMessages.CODESTORE_OUT_OF_GAS
+    ) {
+      for (const [addressToSelfdestructHex, beneficiaryHex] of selfdestruct) {
+        this._result.selfdestruct.set(addressToSelfdestructHex, beneficiaryHex)
+      }
+      if (this.common.isActivatedEIP(6780)) {
+        // copy over the items to result via iterator
+        for (const item of createdAddresses!) {
+          this._result.createdAddresses!.add(item)
+        }
+      }
+      // update stateRoot on current contract
+      const account = await this._stateManager.getAccount(this._env.address)
+      if (!account) {
+        throw EthereumJSErrorWithoutCode('could not read contract account')
+      }
+      this._env.contract = account
+      this._runState.gasRefund = results.execResult.gasRefund ?? BIGINT_0
+      if (results.createdAddress) {
+        // push the created address to the stack
+        return bytesToBigInt(results.createdAddress.bytes)
+      }
+    }
+
+    return this._getReturnCode(results)
+  }
+
+  /**
+   * Creates a new contract with a given value. Generates
+   * a deterministic address via CREATE2 rules.
+   */
+  async create2(
+    gasLimit: bigint,
+    value: bigint,
+    data: Uint8Array,
+    salt: Uint8Array,
+  ): Promise<bigint> {
+    return this.create(gasLimit, value, data, salt)
+  }
+
+  /**
+   * Mark account for later deletion and give the remaining balance to the
+   * specified beneficiary address. This will cause a trap and the
+   * execution will be aborted immediately.
+   * @param toAddress - Beneficiary address
+   */
+  async selfDestruct(toAddress: Address): Promise<void> {
+    return this._selfDestruct(toAddress)
+  }
+
+  async _selfDestruct(toAddress: Address): Promise<void> {
+    // only add to refund if this is the first selfdestruct for the address
+    const selfdestructAddressHex = bytesToHex(this._env.address.bytes)
+    if (!this._result.selfdestruct.has(selfdestructAddressHex)) {
+      this.refundGas(this.common.param('selfdestructRefundGas'))
+    }
+
+    this._result.selfdestruct.set(selfdestructAddressHex, toAddress.toString())
+
+    const toSelf = equalsBytes(toAddress.bytes, this._env.address.bytes)
+    const contractBalance = this._env.contract.balance
+
+    // EIP-7708: Emit ETH transfer log for SELFDESTRUCT with value to a different account
+    if (this.common.isActivatedEIP(7708) && contractBalance > BIGINT_0 && !toSelf) {
+      // Transfer log: from contract to beneficiary
+      const fromTopic = setLengthLeft(this._env.address.bytes, 32)
+      const toTopic = setLengthLeft(toAddress.bytes, 32)
+      const data = setLengthLeft(bigIntToBytes(contractBalance), 32)
+      const transferLog: Log = [
+        EIP7708_SYSTEM_ADDRESS,
+        [EIP7708_TRANSFER_TOPIC, fromTopic, toTopic],
+        data,
+      ]
+      this._result.logs.push(transferLog)
+      await this._evm.emitLog({
+        log: transferLog,
+        origin: 'selfdestructTransfer',
+        depth: this._env.depth,
+        address: this._env.address,
+      })
+    }
+
+    // Add to beneficiary balance
+    let beneficiaryWasNew = false
+    if (!toSelf) {
+      let toAccount = await this._stateManager.getAccount(toAddress)
+      beneficiaryWasNew = toAccount === undefined || toAccount.isEmpty()
+      if (!toAccount) {
+        toAccount = new Account()
+      }
+      const originalBalance = toAccount.balance
+      toAccount.balance += contractBalance
+      await this.journal.putAccount(toAddress, toAccount)
+      if (this.common.isActivatedEIP(7928)) {
+        this._evm.blockLevelAccessList!.addBalanceChange(
+          toAddress.toString(),
+          toAccount.balance,
+          this._evm.blockLevelAccessList!.blockAccessIndex,
+          originalBalance,
+        )
+      }
+    }
+
+    // EIP-8037: SELFDESTRUCT that transfers value to a non-existent beneficiary
+    // creates a new account. Charge stateBytesPerNewAccount * costPerStateByte.
+    if (
+      this.common.isActivatedEIP(8037) &&
+      !toSelf &&
+      beneficiaryWasNew &&
+      contractBalance > BIGINT_0
+    ) {
+      const stateBytesPerNewAccount = this.common.param('stateBytesPerNewAccount')
+      const blockGasLimit = this._env.block.header.gasLimit
+      const costPerStateByte = activeCostPerStateByte(this.common, blockGasLimit)
+      const charge = stateBytesPerNewAccount * costPerStateByte
+      this.chargeStateGas(charge, 'SELFDESTRUCT new beneficiary')
+    }
+
+    // Modify the account (set balance to 0) flag
+    let doModify = !this.common.isActivatedEIP(6780) // Always do this if 6780 is not active
+
+    if (!doModify) {
+      // If 6780 is active, check if current address is being created. If so
+      // old behavior of SELFDESTRUCT exists and balance should be set to 0 of this account
+      // (i.e. burn the ETH in current account)
+      doModify = this._env.createdAddresses!.has(this._env.address.toString())
+      // If contract is not being created in this tx...
+      if (!doModify) {
+        // Check if ETH being sent to another account (thus set balance to 0)
+        doModify = !toSelf
+      }
+    }
+
+    // EIP-8246: SELFDESTRUCT no longer burns ETH. A self-beneficiary keeps
+    // its balance (the account clearing at transaction end preserves the
+    // balance); zeroing only completes a transfer to a different account.
+    if (this.common.isActivatedEIP(8246) && toSelf) {
+      doModify = false
+    }
+
+    // EIP-7708: Emit a Burn log (LOG2) for SELFDESTRUCT to self only when the balance
+    // is actually zeroed (doModify=true, i.e. same-tx contract creation). Pre-existing
+    // contracts where EIP-6780 prevents the burn should not emit a log.
+    // Under EIP-8246 nothing is burned, so no burn log is ever emitted.
+    if (
+      this.common.isActivatedEIP(7708) &&
+      !this.common.isActivatedEIP(8246) &&
+      contractBalance > BIGINT_0 &&
+      toSelf &&
+      doModify
+    ) {
+      const contractTopic = setLengthLeft(this._env.address.bytes, 32)
+      const data = setLengthLeft(bigIntToBytes(contractBalance), 32)
+      const burnLog: Log = [EIP7708_SYSTEM_ADDRESS, [EIP7708_BURN_TOPIC, contractTopic], data]
+      this._result.logs.push(burnLog)
+      await this._evm.emitLog({
+        log: burnLog,
+        origin: 'selfdestructBurn',
+        depth: this._env.depth,
+        address: this._env.address,
+      })
+    }
+
+    // Set contract balance to 0
+    if (doModify) {
+      const originalBalance = this._env.contract.balance
+      await this._stateManager.modifyAccountFields(this._env.address, {
+        balance: BIGINT_0,
+      })
+      if (this.common.isActivatedEIP(7928)) {
+        this._evm.blockLevelAccessList!.addBalanceChange(
+          this._env.address.toString(),
+          BIGINT_0,
+          this._evm.blockLevelAccessList!.blockAccessIndex,
+          originalBalance,
+        )
+      }
+    }
+
+    trap(EVMError.errorMessages.STOP)
+  }
+
+  /**
+   * Creates a new log in the current environment.
+   */
+  log(data: Uint8Array, numberOfTopics: number, topics: Uint8Array[]): void {
+    if (numberOfTopics < 0 || numberOfTopics > 4) {
+      trap(EVMError.errorMessages.OUT_OF_RANGE)
+    }
+
+    if (topics.length !== numberOfTopics) {
+      trap(EVMError.errorMessages.INTERNAL_ERROR)
+    }
+
+    const log: Log = [this._env.address.bytes, topics, data]
+    this._result.logs.push(log)
+    void this._evm.emitLog({
+      log,
+      origin: 'opcode',
+      depth: this._env.depth,
+      address: this._env.address,
+    })
+  }
+
+  private _getReturnCode(results: EVMResult) {
+    if (results.execResult.exceptionError) {
+      return BIGINT_0
+    }
+    return BIGINT_1
+  }
+}

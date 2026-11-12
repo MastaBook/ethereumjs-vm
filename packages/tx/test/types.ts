@@ -1,6 +1,14 @@
 export type ForkName =
+  | 'Prague'
+  | 'Cancun'
+  | 'Shanghai'
+  | 'Paris'
+  | 'London+3860'
+  | 'London'
+  | 'Berlin'
   | 'Istanbul'
   | 'Byzantium'
+  | 'ConstantinopleFix'
   | 'Constantinople'
   | 'EIP150'
   | 'EIP158'
@@ -22,8 +30,10 @@ export interface TxData {
   s: string
 }
 
-// The type of each entry from ./ttTransactionTestEip155VitaliksTests.json
+// The type of each entry from ./ttTransactionTestEip155VitaliksTests.json // cspell:disable-line
+// cspell:disable
 export interface VitaliksTestsDataEntry {
+  // cspell:enable
   blocknumber: string
   hash: string
   rlp: string
@@ -32,25 +42,27 @@ export interface VitaliksTestsDataEntry {
 }
 
 // The type of ./txs.json
-export type TxsJsonEntry = {
+export type TxsJSONEntry = {
   privateKey: string
   sendersAddress: string
   type: string
   cost: number
   raw: string[]
+  data: TxData
 }
 
 export type ForksData = {
-  [forkName in ForkName]: { hash?: string; sender?: string }
+  [forkName in ForkName]: { hash?: string; sender?: string; exception?: string }
 }
 
-export type OfficialTransactionTestData = ForksData & {
+export type OfficialTransactionTestData = {
   _info: {
     comment: string
-    filledwith: string
-    lllcversion: string
+    filledwith: string // cspell:disable-line
+    lllcversion: string // cspell:disable-line
     source: string
     sourceHash: string
   }
-  rlp: string
+  result: ForksData
+  txbytes: string
 }

@@ -1,0 +1,28 @@
+name: Typecheck (tsc)
+on:
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-typecheck
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      - run: npm run tsc --workspaces
+        working-directory: ${{ github.workspace }}

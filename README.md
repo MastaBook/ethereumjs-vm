@@ -1,303 +1,217 @@
 <p align="center">
-  <img src="https://user-images.githubusercontent.com/47108/78779352-d0839500-796a-11ea-9468-fd2a0b3fe1ef.png" width=280>
+  <img src="https://user-images.githubusercontent.com/47108/78779352-d0839500-796a-11ea-9468-fd2a0b3fe1ef.png" width="280" alt="EthereumJS">
 </p>
+
+<div align="center">
+
+| Layer | Packages |
+| --- | --- |
+| **Execution** | `vm`, `evm` |
+| **State** | `statemanager`, `mpt`, `binarytree` |
+| **Protocol** | `tx`, `block`, `blockchain` |
+| **Configuration** | `common`, `genesis` |
+| **Codec & primitives** | `rlp`, `util` |
+
+[Package map ↓](#package-map)
+
+</div>
 
 # EthereumJS Monorepo
 
-[![Code Coverage][coverage-badge]][coverage-link]
-[![Discord][discord-badge]][discord-link]
+**Modular TypeScript libraries for Ethereum execution-layer protocol work.**
 
-This was originally the EthereumJS VM repository. On Q1 2020 we brought some of its building blocks together to simplify development. Below you can find the packages included in this repository.
+[![Code Coverage](https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg)](https://codecov.io/gh/ethereumjs/ethereumjs-monorepo)
+[![Discord](https://img.shields.io/static/v1?logo=discord&label=discord&message=Join&color=blue)](https://discord.gg/TNwARpR)
 
-🚧 Please note that the `master` branch is updated on a daily basis, and to inspect code related to a specific package version, refer to the [tags](https://github.com/ethereumjs/ethereumjs-monorepo/tags).
+Composable, spec-tested building blocks for the [Ethereum](https://ethereum.org) execution layer: EVM execution, transactions, blocks, state, tries, and chain configuration. Use them in Node.js or the browser — tree-shakeable, Noble crypto by default, WASM-free unless you opt in.
 
-| package                                     | npm                                                         | issues                                                                  | tests                                                                  | coverage                                                                |
-| ------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [@ethereumjs/block][block-package]           | [![NPM Package][block-npm-badge]][block-npm-link]           | [![Block Issues][block-issues-badge]][block-issues-link]                | [![Actions Status][block-actions-badge]][block-actions-link]           | [![Code Coverage][block-coverage-badge]][block-coverage-link]           |
-| [@ethereumjs/blockchain][blockchain-package] | [![NPM Package][blockchain-npm-badge]][blockchain-npm-link] | [![Blockchain Issues][blockchain-issues-badge]][blockchain-issues-link] | [![Actions Status][blockchain-actions-badge]][blockchain-actions-link] | [![Code Coverage][blockchain-coverage-badge]][blockchain-coverage-link] |
-| [@ethereumjs/client][client-package]           | [![NPM Package][client-npm-badge]][client-npm-link]           | [![Client Issues][client-issues-badge]][client-issues-link]                | [![Actions Status][client-actions-badge]][client-actions-link]           | [![Code Coverage][client-coverage-badge]][client-coverage-link]           |
-| [@ethereumjs/common][common-package]         | [![NPM Package][common-npm-badge]][common-npm-link]         | [![Common Issues][common-issues-badge]][common-issues-link]             | [![Actions Status][common-actions-badge]][common-actions-link]         | [![Code Coverage][common-coverage-badge]][common-coverage-link]         |
-| [@ethereumjs/devp2p][devp2p-package]         | [![NPM Package][devp2p-npm-badge]][devp2p-npm-link]         | [![Devp2p Issues][devp2p-issues-badge]][devp2p-issues-link]             | [![Actions Status][devp2p-actions-badge]][devp2p-actions-link]         | [![Code Coverage][devp2p-coverage-badge]][devp2p-coverage-link] 
-| [@ethereumjs/ethash][ethash-package]         | [![NPM Package][ethash-npm-badge]][ethash-npm-link]         | [![Ethash Issues][ethash-issues-badge]][ethash-issues-link]             | [![Actions Status][ethash-actions-badge]][ethash-actions-link]         | [![Code Coverage][ethash-coverage-badge]][ethash-coverage-link]         |
-| [merkle-patricia-tree][trie-package]                 | [![NPM Package][trie-npm-badge]][trie-npm-link]                 | [![Trie Issues][trie-issues-badge]][trie-issues-link]                         | [![Actions Status][trie-actions-badge]][trie-actions-link]                 | [![Code Coverage][trie-coverage-badge]][trie-coverage-link] 
-| [@ethereumjs/tx][tx-package]                 | [![NPM Package][tx-npm-badge]][tx-npm-link]                 | [![Tx Issues][tx-issues-badge]][tx-issues-link]                         | [![Actions Status][tx-actions-badge]][tx-actions-link]                 | [![Code Coverage][tx-coverage-badge]][tx-coverage-link]                 |
-| [ethereumjs-util][util-package]                 | [![NPM Package][util-npm-badge]][util-npm-link]                 | [![Util Issues][util-issues-badge]][util-issues-link]                         | [![Actions Status][util-actions-badge]][util-actions-link]                 | [![Code Coverage][util-coverage-badge]][util-coverage-link] 
-| [@ethereumjs/vm][vm-package]                 | [![NPM Package][vm-npm-badge]][vm-npm-link]                 | [![VM Issues][vm-issues-badge]][vm-issues-link]                         | [![Actions Status][vm-actions-badge]][vm-actions-link]                 | [![Code Coverage][vm-coverage-badge]][vm-coverage-link]                 |
+- **Spec-tested execution** — tracks mainnet hardforks ([status ↓](#hardfork-status))
+- **Composable primitives** — mix `tx`, `block`, `mpt`, `statemanager`, and friends instead of pulling in a full client
+- **Browser-ready** — controlled dependency set; package READMEs cover bundler and KZG setup where needed
 
-## Coverage report
+Maintained by former members of the [Ethereum Foundation](https://ethereum.foundation/) JavaScript team and the broader Ethereum community.
 
-Detailed version can be seen on [Codecov.io][coverage-link]
+## Hardfork status
 
-[![Code Coverage](https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graphs/icicle.svg)][coverage-link]
+| Fork | Status |
+| --- | --- |
+| **Osaka** | Mainnet today — stable on npm |
+| **Amsterdam** | In development - see status [here](./packages/vm/README.md#amsterdam-hardfork-experimental) |
 
-## Package dependency relationship
+## What do you want to do?
 
-<p align="center">
- <img width="500" alt="diagram" src="https://mermaid.ink/svg/eyJjb2RlIjoiZ3JhcGggVERcbiAgdm17dm19XG4gIGNsaWVudHtjbGllbnR9XG4gIGV0aGFzaCAtLT4gYmxvY2tjaGFpblxuICBkZXZwMnAgLS0-IGNsaWVudFxuICBibG9jayAtLT4gYmxvY2tjaGFpblxuICBibG9jayAtLT4gY2xpZW50XG4gIGJsb2NrIC0tPiB2bVxuICBibG9ja2NoYWluIC0tPiBjbGllbnRcbiAgYmxvY2tjaGFpbiAtLT4gdm1cbiAgdHJpZSAtLT4gY2xpZW50XG4gIHRyaWUgLS0-IHZtXG4gIHRyaWUgLS0-IGJsb2NrXG4gIGNvbW1vbiAtLT4gYmxvY2tcbiAgY29tbW9uIC0tPiBibG9ja2NoYWluXG4gIGNvbW1vbiAtLT4gdHhcbiAgY29tbW9uIC0tPiB2bVxuICBjb21tb24gLS0-IGNsaWVudFxuICBjb21tb24gLS0-IGRldnAycFxuICB0eCAtLT4gYmxvY2tcbiAgdHggLS0-IHZtXG4gIHZtIC0tPiBjbGllbnQiLCJtZXJtYWlkIjp7InRoZW1lIjoiZGVmYXVsdCIsInRoZW1lVmFyaWFibGVzIjp7ImJhY2tncm91bmQiOiJ3aGl0ZSIsInByaW1hcnlDb2xvciI6IiNFQ0VDRkYiLCJzZWNvbmRhcnlDb2xvciI6IiNmZmZmZGUiLCJ0ZXJ0aWFyeUNvbG9yIjoiaHNsKDgwLCAxMDAlLCA5Ni4yNzQ1MDk4MDM5JSkiLCJwcmltYXJ5Qm9yZGVyQ29sb3IiOiJoc2woMjQwLCA2MCUsIDg2LjI3NDUwOTgwMzklKSIsInNlY29uZGFyeUJvcmRlckNvbG9yIjoiaHNsKDYwLCA2MCUsIDgzLjUyOTQxMTc2NDclKSIsInRlcnRpYXJ5Qm9yZGVyQ29sb3IiOiJoc2woODAsIDYwJSwgODYuMjc0NTA5ODAzOSUpIiwicHJpbWFyeVRleHRDb2xvciI6IiMxMzEzMDAiLCJzZWNvbmRhcnlUZXh0Q29sb3IiOiIjMDAwMDIxIiwidGVydGlhcnlUZXh0Q29sb3IiOiJyZ2IoOS41MDAwMDAwMDAxLCA5LjUwMDAwMDAwMDEsIDkuNTAwMDAwMDAwMSkiLCJsaW5lQ29sb3IiOiIjMzMzMzMzIiwidGV4dENvbG9yIjoiIzMzMyIsIm1haW5Ca2ciOiIjRUNFQ0ZGIiwic2Vjb25kQmtnIjoiI2ZmZmZkZSIsImJvcmRlcjEiOiIjOTM3MERCIiwiYm9yZGVyMiI6IiNhYWFhMzMiLCJhcnJvd2hlYWRDb2xvciI6IiMzMzMzMzMiLCJmb250RmFtaWx5IjoiXCJ0cmVidWNoZXQgbXNcIiwgdmVyZGFuYSwgYXJpYWwiLCJmb250U2l6ZSI6IjE2cHgiLCJsYWJlbEJhY2tncm91bmQiOiIjZThlOGU4Iiwibm9kZUJrZyI6IiNFQ0VDRkYiLCJub2RlQm9yZGVyIjoiIzkzNzBEQiIsImNsdXN0ZXJCa2ciOiIjZmZmZmRlIiwiY2x1c3RlckJvcmRlciI6IiNhYWFhMzMiLCJkZWZhdWx0TGlua0NvbG9yIjoiIzMzMzMzMyIsInRpdGxlQ29sb3IiOiIjMzMzIiwiZWRnZUxhYmVsQmFja2dyb3VuZCI6IiNlOGU4ZTgiLCJhY3RvckJvcmRlciI6ImhzbCgyNTkuNjI2MTY4MjI0MywgNTkuNzc2NTM2MzEyOCUsIDg3LjkwMTk2MDc4NDMlKSIsImFjdG9yQmtnIjoiI0VDRUNGRiIsImFjdG9yVGV4dENvbG9yIjoiYmxhY2siLCJhY3RvckxpbmVDb2xvciI6ImdyZXkiLCJzaWduYWxDb2xvciI6IiMzMzMiLCJzaWduYWxUZXh0Q29sb3IiOiIjMzMzIiwibGFiZWxCb3hCa2dDb2xvciI6IiNFQ0VDRkYiLCJsYWJlbEJveEJvcmRlckNvbG9yIjoiaHNsKDI1OS42MjYxNjgyMjQzLCA1OS43NzY1MzYzMTI4JSwgODcuOTAxOTYwNzg0MyUpIiwibGFiZWxUZXh0Q29sb3IiOiJibGFjayIsImxvb3BUZXh0Q29sb3IiOiJibGFjayIsIm5vdGVCb3JkZXJDb2xvciI6IiNhYWFhMzMiLCJub3RlQmtnQ29sb3IiOiIjZmZmNWFkIiwibm90ZVRleHRDb2xvciI6ImJsYWNrIiwiYWN0aXZhdGlvbkJvcmRlckNvbG9yIjoiIzY2NiIsImFjdGl2YXRpb25Ca2dDb2xvciI6IiNmNGY0ZjQiLCJzZXF1ZW5jZU51bWJlckNvbG9yIjoid2hpdGUiLCJzZWN0aW9uQmtnQ29sb3IiOiJyZ2JhKDEwMiwgMTAyLCAyNTUsIDAuNDkpIiwiYWx0U2VjdGlvbkJrZ0NvbG9yIjoid2hpdGUiLCJzZWN0aW9uQmtnQ29sb3IyIjoiI2ZmZjQwMCIsInRhc2tCb3JkZXJDb2xvciI6IiM1MzRmYmMiLCJ0YXNrQmtnQ29sb3IiOiIjOGE5MGRkIiwidGFza1RleHRMaWdodENvbG9yIjoid2hpdGUiLCJ0YXNrVGV4dENvbG9yIjoid2hpdGUiLCJ0YXNrVGV4dERhcmtDb2xvciI6ImJsYWNrIiwidGFza1RleHRPdXRzaWRlQ29sb3IiOiJibGFjayIsInRhc2tUZXh0Q2xpY2thYmxlQ29sb3IiOiIjMDAzMTYzIiwiYWN0aXZlVGFza0JvcmRlckNvbG9yIjoiIzUzNGZiYyIsImFjdGl2ZVRhc2tCa2dDb2xvciI6IiNiZmM3ZmYiLCJncmlkQ29sb3IiOiJsaWdodGdyZXkiLCJkb25lVGFza0JrZ0NvbG9yIjoibGlnaHRncmV5IiwiZG9uZVRhc2tCb3JkZXJDb2xvciI6ImdyZXkiLCJjcml0Qm9yZGVyQ29sb3IiOiIjZmY4ODg4IiwiY3JpdEJrZ0NvbG9yIjoicmVkIiwidG9kYXlMaW5lQ29sb3IiOiJyZWQiLCJsYWJlbENvbG9yIjoiYmxhY2siLCJlcnJvckJrZ0NvbG9yIjoiIzU1MjIyMiIsImVycm9yVGV4dENvbG9yIjoiIzU1MjIyMiIsImNsYXNzVGV4dCI6IiMxMzEzMDAiLCJmaWxsVHlwZTAiOiIjRUNFQ0ZGIiwiZmlsbFR5cGUxIjoiI2ZmZmZkZSIsImZpbGxUeXBlMiI6ImhzbCgzMDQsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlMyI6ImhzbCgxMjQsIDEwMCUsIDkzLjUyOTQxMTc2NDclKSIsImZpbGxUeXBlNCI6ImhzbCgxNzYsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlNSI6ImhzbCgtNCwgMTAwJSwgOTMuNTI5NDExNzY0NyUpIiwiZmlsbFR5cGU2IjoiaHNsKDgsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlNyI6ImhzbCgxODgsIDEwMCUsIDkzLjUyOTQxMTc2NDclKSJ9fSwidXBkYXRlRWRpdG9yIjpmYWxzZX0">
-</p>
+| Goal | Start here | npm package |
+| ---- | ---------- | ----------- |
+| Run a signed tx, replay a block, or build a block | [packages/vm](./packages/vm) | `@ethereumjs/vm` |
+| Execute bytecode, custom opcodes, or precompiles | [packages/evm](./packages/evm) | `@ethereumjs/evm` |
+| Create, sign, or parse transactions | [packages/tx](./packages/tx) | `@ethereumjs/tx` |
+| Blocks, headers, withdrawals | [packages/block](./packages/block) | `@ethereumjs/block` |
+| Persistent chain storage | [packages/blockchain](./packages/blockchain) | `@ethereumjs/blockchain` |
+| Merkle proofs and trie tooling | [packages/mpt](./packages/mpt) | `@ethereumjs/mpt` |
+| Chain config and hardfork parameters | [packages/common](./packages/common) | `@ethereumjs/common` |
 
-To update the diagram above use [this edit url](https://mermaid-js.github.io/mermaid-live-editor/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAgdm17dm19XG4gIGNsaWVudHtjbGllbnR9XG4gIGV0aGFzaCAtLT4gYmxvY2tjaGFpblxuICBkZXZwMnAgLS0-IGNsaWVudFxuICBibG9jayAtLT4gYmxvY2tjaGFpblxuICBibG9jayAtLT4gY2xpZW50XG4gIGJsb2NrIC0tPiB2bVxuICBibG9ja2NoYWluIC0tPiBjbGllbnRcbiAgYmxvY2tjaGFpbiAtLT4gdm1cbiAgdHJpZSAtLT4gY2xpZW50XG4gIHRyaWUgLS0-IHZtXG4gIHRyaWUgLS0-IGJsb2NrXG4gIGNvbW1vbiAtLT4gYmxvY2tcbiAgY29tbW9uIC0tPiBibG9ja2NoYWluXG4gIGNvbW1vbiAtLT4gdHhcbiAgY29tbW9uIC0tPiB2bVxuICBjb21tb24gLS0-IGNsaWVudFxuICBjb21tb24gLS0-IGRldnAycFxuICB0eCAtLT4gYmxvY2tcbiAgdHggLS0-IHZtXG4gIHZtIC0tPiBjbGllbnQiLCJtZXJtYWlkIjp7InRoZW1lIjoiZGVmYXVsdCIsInRoZW1lVmFyaWFibGVzIjp7ImJhY2tncm91bmQiOiJ3aGl0ZSIsInByaW1hcnlDb2xvciI6IiNFQ0VDRkYiLCJzZWNvbmRhcnlDb2xvciI6IiNmZmZmZGUiLCJ0ZXJ0aWFyeUNvbG9yIjoiaHNsKDgwLCAxMDAlLCA5Ni4yNzQ1MDk4MDM5JSkiLCJwcmltYXJ5Qm9yZGVyQ29sb3IiOiJoc2woMjQwLCA2MCUsIDg2LjI3NDUwOTgwMzklKSIsInNlY29uZGFyeUJvcmRlckNvbG9yIjoiaHNsKDYwLCA2MCUsIDgzLjUyOTQxMTc2NDclKSIsInRlcnRpYXJ5Qm9yZGVyQ29sb3IiOiJoc2woODAsIDYwJSwgODYuMjc0NTA5ODAzOSUpIiwicHJpbWFyeVRleHRDb2xvciI6IiMxMzEzMDAiLCJzZWNvbmRhcnlUZXh0Q29sb3IiOiIjMDAwMDIxIiwidGVydGlhcnlUZXh0Q29sb3IiOiJyZ2IoOS41MDAwMDAwMDAxLCA5LjUwMDAwMDAwMDEsIDkuNTAwMDAwMDAwMSkiLCJsaW5lQ29sb3IiOiIjMzMzMzMzIiwidGV4dENvbG9yIjoiIzMzMyIsIm1haW5Ca2ciOiIjRUNFQ0ZGIiwic2Vjb25kQmtnIjoiI2ZmZmZkZSIsImJvcmRlcjEiOiIjOTM3MERCIiwiYm9yZGVyMiI6IiNhYWFhMzMiLCJhcnJvd2hlYWRDb2xvciI6IiMzMzMzMzMiLCJmb250RmFtaWx5IjoiXCJ0cmVidWNoZXQgbXNcIiwgdmVyZGFuYSwgYXJpYWwiLCJmb250U2l6ZSI6IjE2cHgiLCJsYWJlbEJhY2tncm91bmQiOiIjZThlOGU4Iiwibm9kZUJrZyI6IiNFQ0VDRkYiLCJub2RlQm9yZGVyIjoiIzkzNzBEQiIsImNsdXN0ZXJCa2ciOiIjZmZmZmRlIiwiY2x1c3RlckJvcmRlciI6IiNhYWFhMzMiLCJkZWZhdWx0TGlua0NvbG9yIjoiIzMzMzMzMyIsInRpdGxlQ29sb3IiOiIjMzMzIiwiZWRnZUxhYmVsQmFja2dyb3VuZCI6IiNlOGU4ZTgiLCJhY3RvckJvcmRlciI6ImhzbCgyNTkuNjI2MTY4MjI0MywgNTkuNzc2NTM2MzEyOCUsIDg3LjkwMTk2MDc4NDMlKSIsImFjdG9yQmtnIjoiI0VDRUNGRiIsImFjdG9yVGV4dENvbG9yIjoiYmxhY2siLCJhY3RvckxpbmVDb2xvciI6ImdyZXkiLCJzaWduYWxDb2xvciI6IiMzMzMiLCJzaWduYWxUZXh0Q29sb3IiOiIjMzMzIiwibGFiZWxCb3hCa2dDb2xvciI6IiNFQ0VDRkYiLCJsYWJlbEJveEJvcmRlckNvbG9yIjoiaHNsKDI1OS42MjYxNjgyMjQzLCA1OS43NzY1MzYzMTI4JSwgODcuOTAxOTYwNzg0MyUpIiwibGFiZWxUZXh0Q29sb3IiOiJibGFjayIsImxvb3BUZXh0Q29sb3IiOiJibGFjayIsIm5vdGVCb3JkZXJDb2xvciI6IiNhYWFhMzMiLCJub3RlQmtnQ29sb3IiOiIjZmZmNWFkIiwibm90ZVRleHRDb2xvciI6ImJsYWNrIiwiYWN0aXZhdGlvbkJvcmRlckNvbG9yIjoiIzY2NiIsImFjdGl2YXRpb25Ca2dDb2xvciI6IiNmNGY0ZjQiLCJzZXF1ZW5jZU51bWJlckNvbG9yIjoid2hpdGUiLCJzZWN0aW9uQmtnQ29sb3IiOiJyZ2JhKDEwMiwgMTAyLCAyNTUsIDAuNDkpIiwiYWx0U2VjdGlvbkJrZ0NvbG9yIjoid2hpdGUiLCJzZWN0aW9uQmtnQ29sb3IyIjoiI2ZmZjQwMCIsInRhc2tCb3JkZXJDb2xvciI6IiM1MzRmYmMiLCJ0YXNrQmtnQ29sb3IiOiIjOGE5MGRkIiwidGFza1RleHRMaWdodENvbG9yIjoid2hpdGUiLCJ0YXNrVGV4dENvbG9yIjoid2hpdGUiLCJ0YXNrVGV4dERhcmtDb2xvciI6ImJsYWNrIiwidGFza1RleHRPdXRzaWRlQ29sb3IiOiJibGFjayIsInRhc2tUZXh0Q2xpY2thYmxlQ29sb3IiOiIjMDAzMTYzIiwiYWN0aXZlVGFza0JvcmRlckNvbG9yIjoiIzUzNGZiYyIsImFjdGl2ZVRhc2tCa2dDb2xvciI6IiNiZmM3ZmYiLCJncmlkQ29sb3IiOiJsaWdodGdyZXkiLCJkb25lVGFza0JrZ0NvbG9yIjoibGlnaHRncmV5IiwiZG9uZVRhc2tCb3JkZXJDb2xvciI6ImdyZXkiLCJjcml0Qm9yZGVyQ29sb3IiOiIjZmY4ODg4IiwiY3JpdEJrZ0NvbG9yIjoicmVkIiwidG9kYXlMaW5lQ29sb3IiOiJyZWQiLCJsYWJlbENvbG9yIjoiYmxhY2siLCJlcnJvckJrZ0NvbG9yIjoiIzU1MjIyMiIsImVycm9yVGV4dENvbG9yIjoiIzU1MjIyMiIsImNsYXNzVGV4dCI6IiMxMzEzMDAiLCJmaWxsVHlwZTAiOiIjRUNFQ0ZGIiwiZmlsbFR5cGUxIjoiI2ZmZmZkZSIsImZpbGxUeXBlMiI6ImhzbCgzMDQsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlMyI6ImhzbCgxMjQsIDEwMCUsIDkzLjUyOTQxMTc2NDclKSIsImZpbGxUeXBlNCI6ImhzbCgxNzYsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlNSI6ImhzbCgtNCwgMTAwJSwgOTMuNTI5NDExNzY0NyUpIiwiZmlsbFR5cGU2IjoiaHNsKDgsIDEwMCUsIDk2LjI3NDUwOTgwMzklKSIsImZpbGxUeXBlNyI6ImhzbCgxODgsIDEwMCUsIDkzLjUyOTQxMTc2NDclKSJ9fSwidXBkYXRlRWRpdG9yIjpmYWxzZX0)
-and open a new PR with the changes. Be sure to update both the diagram and the edit url.
+```mermaid
+flowchart TD
+  start[What_are_you_building]
+  start --> txRules[Tx_and_block_rules]
+  start --> bytecode[Bytecode_only]
+  start --> chainData[Chain_storage_or_types]
 
-## Development quick start
-
-First, make sure you have the `ethereum-tests` git submodule, by running: 
-
-```sh
-git submodule init
-git submodule update
+  txRules --> vmPkg["@ethereumjs/vm"]
+  bytecode --> evmPkg["@ethereumjs/evm"]
+  chainData --> blockPkg["@ethereumjs/block / blockchain"]
 ```
 
-This monorepo uses [Lerna](https://lerna.js.org/). It links the local packages together, making development a lot easier.
+## Quick start
 
-TLDR: Setup
+Install the VM (includes EVM, tx, and state wiring):
+
+```shell
+npm install @ethereumjs/vm @ethereumjs/common @ethereumjs/tx @ethereumjs/util
+```
+
+Run a simple signed transfer against an in-memory state (adapted from [`packages/vm/examples/runTx.ts`](./packages/vm/examples/runTx.ts)):
+
+```ts
+import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
+import { createLegacyTx } from '@ethereumjs/tx'
+import {
+  createAccount,
+  createAddressFromPrivateKey,
+  createZeroAddress,
+  hexToBytes,
+} from '@ethereumjs/util'
+import { createVM, runTx } from '@ethereumjs/vm'
+
+const common = new Common({ chain: Mainnet, hardfork: Hardfork.Prague })
+const vm = await createVM({ common })
+
+const senderKey = hexToBytes(`0x${'20'.repeat(32)}`)
+const sender = createAddressFromPrivateKey(senderKey)
+await vm.stateManager.putAccount(sender, createAccount({ nonce: 0n, balance: BigInt(1e18) }))
+
+const tx = createLegacyTx({
+  gasLimit: 21000n,
+  gasPrice: 1_000_000_000n,
+  value: 1n,
+  to: createZeroAddress(),
+}).sign(senderKey)
+
+const res = await runTx(vm, { tx })
+console.log(res.totalGasSpent) // 21000n
+```
+
+For bytecode-only execution use `@ethereumjs/evm` ([examples](./packages/evm/examples/)). For blob (EIP-4844) transactions you need a separate KZG library — see [KZG setup](./packages/tx/README.md#kzg-setup) in the tx README.
+
+## Package map
+
+Active packages (published in sync on v10; see [`scripts/release-npm.ts`](./scripts/release-npm.ts)):
+
+### Codec and primitives
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/rlp`](./packages/rlp) [![npm](https://img.shields.io/npm/v/@ethereumjs/rlp.svg)](https://www.npmjs.com/package/@ethereumjs/rlp) | RLP encode/decode | [README](./packages/rlp/README.md) |
+| [`@ethereumjs/util`](./packages/util) [![npm](https://img.shields.io/npm/v/@ethereumjs/util.svg)](https://www.npmjs.com/package/@ethereumjs/util) | Bytes, accounts, addresses, signatures | [README](./packages/util/README.md) |
+
+### Configuration
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/common`](./packages/common) [![npm](https://img.shields.io/npm/v/@ethereumjs/common.svg)](https://www.npmjs.com/package/@ethereumjs/common) | Chains, hardforks, EIP parameters | [README](./packages/common/README.md) |
+| [`@ethereumjs/genesis`](./packages/genesis) [![npm](https://img.shields.io/npm/v/@ethereumjs/genesis.svg)](https://www.npmjs.com/package/@ethereumjs/genesis) | Genesis state for known chains | [README](./packages/genesis/README.md) |
+| [`@ethereumjs/beacon-light`](./packages/beacon-light) [![npm](https://img.shields.io/npm/v/@ethereumjs/beacon-light.svg)](https://www.npmjs.com/package/@ethereumjs/beacon-light) | Consensus light-client sync committee verifier | [README](./packages/beacon-light/README.md) |
+
+### Protocol types
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/tx`](./packages/tx) [![npm](https://img.shields.io/npm/v/@ethereumjs/tx.svg)](https://www.npmjs.com/package/@ethereumjs/tx) | Legacy, 1559, 2930, 4844, 7702 transactions | [README](./packages/tx/README.md) |
+| [`@ethereumjs/block`](./packages/block) [![npm](https://img.shields.io/npm/v/@ethereumjs/block.svg)](https://www.npmjs.com/package/@ethereumjs/block) | Blocks, headers, withdrawals | [README](./packages/block/README.md) |
+
+### State
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/mpt`](./packages/mpt) [![npm](https://img.shields.io/npm/v/@ethereumjs/mpt.svg)](https://www.npmjs.com/package/@ethereumjs/mpt) | Merkle Patricia Trie and proofs | [README](./packages/mpt/README.md) |
+| [`@ethereumjs/binarytree`](./packages/binarytree) [![npm](https://img.shields.io/npm/v/@ethereumjs/binarytree.svg)](https://www.npmjs.com/package/@ethereumjs/binarytree) | EIP-7864 binary tree | [README](./packages/binarytree/README.md) |
+| [`@ethereumjs/statemanager`](./packages/statemanager) [![npm](https://img.shields.io/npm/v/@ethereumjs/statemanager.svg)](https://www.npmjs.com/package/@ethereumjs/statemanager) | Merkle, RPC, and binary-tree state backends | [README](./packages/statemanager/README.md) |
+
+### Execution
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/evm`](./packages/evm) [![npm](https://img.shields.io/npm/v/@ethereumjs/evm.svg)](https://www.npmjs.com/package/@ethereumjs/evm) | EVM interpreter, opcodes, precompiles | [README](./packages/evm/README.md) |
+| [`@ethereumjs/vm`](./packages/vm) [![npm](https://img.shields.io/npm/v/@ethereumjs/vm.svg)](https://www.npmjs.com/package/@ethereumjs/vm) | `runTx`, `runBlock`, block building | [README](./packages/vm/README.md) |
+
+### Chain storage
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/blockchain`](./packages/blockchain) [![npm](https://img.shields.io/npm/v/@ethereumjs/blockchain.svg)](https://www.npmjs.com/package/@ethereumjs/blockchain) | Canonical chain storage and validation | [README](./packages/blockchain/README.md) |
+
+### Networking
+
+| Package | Role | Docs |
+| ------- | ---- | ---- |
+| [`@ethereumjs/devp2p`](./packages/devp2p) [![npm](https://img.shields.io/npm/v/@ethereumjs/devp2p.svg)](https://www.npmjs.com/package/@ethereumjs/devp2p) | devp2p DPT discovery, RLPx, ETH/SNAP wire protocols | [README](./packages/devp2p/README.md) |
+
+### Other packages
+
+| Package | Role | Notes |
+| ------- | ---- | ----- |
+| [`@ethereumjs/e2store`](./packages/e2store) [![npm](https://img.shields.io/npm/v/@ethereumjs/e2store.svg)](https://www.npmjs.com/package/@ethereumjs/e2store) | Era / Era1 / E2HS archive formats | Deprecation [under consideration](./packages/e2store/README.md) |
+| [`@ethereumjs/ethash`](./packages/ethash) [![npm](https://img.shields.io/npm/v/@ethereumjs/ethash.svg)](https://www.npmjs.com/package/@ethereumjs/ethash) | Ethash PoW verification | Maintained for deps; not in active release round |
+
+## How packages fit together
+
+```mermaid
+flowchart BT
+  rlp --> util --> common
+  common --> tx & block & mpt & genesis
+  mpt --> block & statemanager
+  tx --> block --> vm
+  statemanager --> evm --> vm
+  block --> blockchain
+  common --> devp2p
+  rlp --> devp2p
+  util --> devp2p
+```
+
+Full responsibility matrix, execution flow (`runBlock` → `runTx` → `evm`), and release notes: **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
+
+## Contribute
+
+**Releases:** active development on [`master`](https://github.com/ethereumjs/ethereumjs-monorepo) (v10). Maintenance branches and breaking-release policy: [DEVELOPER.md § Releases](./DEVELOPER.md#releases).
+
+**Clone and build:**
+
 ```sh
+git clone https://github.com/ethereumjs/ethereumjs-monorepo.git
+cd ethereumjs-monorepo
 npm install
-npm run build
 ```
 
-TLDR: To update dependencies and (re-)link packages
-```sh
-npm run bootstrap
-npm run build
-```
+Tooling, CI, conventions, and release process: **[DEVELOPER.md](./DEVELOPER.md)** · **[CONTRIBUTING.md](./.github/CONTRIBUTING.md)**.
 
-Above is the quickest way to set you up. Going down the road, there are two sets of commands: *project* and *package-specific* commands. You can find them at `./package.json` and `./packages/*/package.json`, respectively. Here's a breakdown:
+<details>
+<summary>Deprecated packages (no longer updated)</summary>
 
-### Project scripts — run from repository root
+| Package | Role |
+| ------- | ---- |
+| [`@ethereumjs/client`](./archive/client) | Full execution client (archived; not installed — see [archive/README.md](./archive/README.md)) |
+| [`@ethereumjs/wallet`](./packages/wallet) | Key management helpers (deprecated) |
 
-#### `npm install`
-Adds dependencies listed in the root package. Also, it executes the `bootstrap` script described below, installing all sub-packages dependencies.
+Still on npm for migration reference; do not start new projects on these packages.
 
-#### `npm run bootstrap`
+</details>
 
-Installs dependencies for all sub-packages, and links them to create an integrated development environment.
+## Community
 
-#### `npm run build`
+The `EthereumJS` GitHub organization is maintained by the former Ethereum Foundation JavaScript team and contributors. Join [Discord](https://discord.gg/TNwARpR) for questions and follow the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
-Builds all monorepo packages by default. If a scope is provided, it will only build that particular package.
+**Related:** [Lodestar](https://github.com/ChainSafe/lodestar) — TypeScript consensus client and SSZ tooling for the Ethereum consensus layer.
 
-Scoped example, that will only build the VM package: 
-  npm run build -- --scope @ethereumjs/vm
+## License
 
-
-#### `npm run build:tree -- --scope @ethereumjs/blockchain`
-
-Builds all local packages that the provided package depends on (e.g.: @ethereumjs/blockchain), and builds itself. 
-
-If no scope is provided, `npm run build:tree`, will build all sub-packages.
-
-#### `npm run clean`
-
-Removes root and packages `node_modules` directories, and other generated files, like `coverage`, `dist` and others. This is useful to run after changing branches, to have a clean slate to work with.
-
-#### `npm run lint` and `npm run lint:fix`
-
-These scripts execute `lint` and `lint:fix` respectively, to all monorepo packages. Worth noting that there is a git hook in place that runs `npm run lint` for every `git push`. This check can be skipped using `git push [command] --no-verify`.
-
-### Package scripts — run from `./packages/<name>`
-
- **⚠️ Important: if you run `npm install` from the package directory, it will remove all links to the local packages, pulling all dependencies from npm. Run `npm install` from the root only.**
- 
-There's a set of rather standardized commands you will find in each package of this repository.
-
-#### `npm run build`
-
-Uses TypeScript compiler to build source files. The resulting files can be found at `packages/<name>/dist`.
-
-#### `npm run coverage`
-
-Runs whatever is on `npm run test` script, capturing testing coverage information. By the end, it displays a coverage table. Additional reports can be found at `packages/<name>/coverage/`.
-
-#### `npm run docs:build`
-
-Generates package documentation and saves them to `./packages/<name>/docs`.
-
-#### `npm run lint`
-
-Checks code style according to the rules defined in [ethereumjs-config](https://github.com/ethereumjs/ethereumjs-config).
-
-#### `npm run lint:fix`
-
-Fixes code style according to the rules. Differently from `npm run lint`, this command actually writes to files.
-
-#### `npm run test`
-
-Runs the package tests. 
-
-_Note that the VM has several test scopes - refer to [packages/vm/package.json](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/vm/package.json) for more info._
-
-### Going further
-
-As this project is powered by Lerna, you can install it globally to enjoy lots more options. Refer to [Lerna docs](https://github.com/lerna/lerna/tree/master/commands/run) for additional commands.
-
-- `npm install -g lerna`
-- `lerna run`
-- `lerna exec`
-
-#### Cleaning `node_modules`
-
-Hoisting is enabled so dependencies are moved to the root `node_modules`. `lerna clean` [does not remove the root `node_modules`](https://github.com/lerna/lerna/issues/1304) so for convenience you can use the project script `npm run clean`.
-
-### Testing packages locally on other projects
-
-There are some ways you can link this repository packages to other projects before publishing. You can symlink dependencies with [`npm link <package>`](https://docs.npmjs.com/cli/link), or install packages from the filesystem using [`npm install <folder>`](https://docs.npmjs.com/cli/install). But they are subject to some externalities and most importantly with how your package manager handles the lifecycle of packages during installs. 
-
-_Note: Git references do not work with monorepo setups out of the box due to the lack of directory traversal on the syntax. E.g.:_
-
-  npm install git@github.com:ethereumjs/ethereumjs-monorepo.git
-
-_One way to fetch packages remotely from GitHub before publishing is using [gitpkg.now.sh](https://gitpkg.now.sh/)._
-
-But there's a cleaner way to manage your dependencies using Verdaccio. 
-
-#### Install Verdaccio
-
-Verdaccio is an npm registry and proxy that can be of great help to test packages locally. Check out their [Getting Started guide](https://github.com/verdaccio/verdaccio#get-started).
-
-#### Installs, hoists dependencies and builds packages
-npm install
-
-#### Publish monorepo packages to Verdaccio
-lerna exec "npm publish --registry http://localhost:4873 --ignore-scripts"
-
-#### Unpublish all monorepo packages from Verdaccio
-lerna exec "npm unpublish \$LERNA_PACKAGE_NAME --registry http://localhost:4873 --force"
-
-#### Setup @ethereumjs scope to local Verdaccio server
-  npm config set @ethereumjs:registry http://localhost:4873
-
-#### Teardown @ethereumjs scope to local Verdaccio server
-  npm config delete @ethereumjs:registry
-
-### E2E testing in CI
-
-Verdaccio is also set up in the `e2e_tests` CI workflow and provides a way to install @ethereumjs
-packages at an arbitrary commit in an external real-world project and run their unit
-tests with it. This testing strategy is borrowed from ethereum/solidity which checks latest Solidity
-against OpenZeppelin and others to keep abreast of how local changes might affect critical projects
-downstream from them.
-
-Tests like this are:
-+ a pre-publication sanity check that discovers how @ethereumjs performs in the wild
-+ useful for catching problems which are difficult to anticipate
-+ exposed to failure for reasons outside of @ethereumjs's control, ex: when fixes here surface bugs
-  in the target.
-
-E2E tests are constructed by cloning a real world target and using npm or yarn to replace its
-existing @ethereumjs dependencies with the versions published to CI's ephemeral private npm registry.
-
-In practice, complex projects might have several versions of @ethereumjs packages nested in
-their dependency tree. It's important to coerce all of them to the virtually published versions
-for the test to be valid. This can be done using Yarn's selective dependency resolutions feature.
-The verdaccio publication step writes a json map of @ethereumjs package names and their
-virtually published versions to `resolutions.json` in the root directory. This object can be
-injected into the E2E target's package.json under the `resolutions` key and Yarn will install
-new versions everywhere as expected.
-
-# EthereumJS
-
-See our organizational [documentation](https://ethereumjs.readthedocs.io) for an introduction to `EthereumJS` as well as information on current standards and best practices.
-
-If you want to join for work or do improvements on the libraries have a look at our [contribution guidelines](https://ethereumjs.readthedocs.io/en/latest/contributing.html).
-
-# LICENSE
-
-[MIT](https://opensource.org/licenses/MIT)
-
-[coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg
-[coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo
-[discord-badge]: https://img.shields.io/static/v1?logo=discord&label=discord&message=Join&color=blue
-[discord-link]: https://discord.gg/TNwARpR
-[stackexchange-badge]: https://img.shields.io/badge/ethereumjs-stackexchange-brightgreen
-[stackexchange-link]: https://ethereum.stackexchange.com/questions/tagged/ethereumjs
-[block-package]: ./packages/block
-[block-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/block.svg
-[block-npm-link]: https://www.npmjs.com/package/@ethereumjs/block
-[block-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20block?label=issues
-[block-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+block"
-[block-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Block/badge.svg
-[block-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Block%22
-[block-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=block
-[block-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/block
-[blockchain-package]: ./packages/blockchain
-[blockchain-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/blockchain.svg
-[blockchain-npm-link]: https://www.npmjs.com/package/@ethereumjs/blockchain
-[blockchain-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20blockchain?label=issues
-[blockchain-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+blockchain"
-[blockchain-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Blockchain/badge.svg
-[blockchain-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Blockchain%22
-[blockchain-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=blockchain
-[blockchain-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/blockchain
-[client-package]: ./packages/client
-[client-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/client.svg
-[client-npm-link]: https://www.npmjs.com/package/@ethereumjs/client
-[client-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20client?label=issues
-[client-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+client"
-[client-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Client/badge.svg
-[client-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Client%22
-[client-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=client
-[client-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/client
-[common-package]: ./packages/common
-[common-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/common.svg
-[common-npm-link]: https://www.npmjs.com/package/@ethereumjs/common
-[common-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20common?label=issues
-[common-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+common"
-[common-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Common/badge.svg
-[common-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Common%22
-[common-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=common
-[common-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/common
-[devp2p-package]: ./packages/devp2p
-[devp2p-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/devp2p.svg
-[devp2p-npm-link]: https://www.npmjs.com/package/@ethereumjs/devp2p
-[devp2p-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20devp2p?label=issues
-[devp2p-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+devp2p"
-[devp2p-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Devp2p/badge.svg
-[devp2p-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Devp2p%22
-[devp2p-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=devp2p
-[devp2p-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/devp2p
-[ethash-package]: ./packages/ethash
-[ethash-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/ethash.svg
-[ethash-npm-link]: https://www.npmjs.org/package/@ethereumjs/ethash
-[ethash-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20ethash?label=issues
-[ethash-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+ethash"
-[ethash-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Ethash/badge.svg
-[ethash-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Ethash%22
-[ethash-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=ethash
-[ethash-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/ethash
-[tx-package]: ./packages/tx
-[tx-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/tx.svg
-[tx-npm-link]: https://www.npmjs.com/package/@ethereumjs/tx
-[tx-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20tx?label=issues
-[tx-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+tx"
-[tx-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Tx/badge.svg
-[tx-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Tx%22
-[tx-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=tx
-[tx-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/tx
-[trie-package]: ./packages/trie
-[trie-npm-badge]: https://img.shields.io/npm/v/merkle-patricia-tree.svg
-[trie-npm-link]: https://www.npmjs.com/package/merkle-patricia-tree
-[trie-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20trie?label=issues
-[trie-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+trie"
-[trie-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Trie/badge.svg
-[trie-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Trie%22
-[trie-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=trie
-[trie-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/trie
-[util-package]: ./packages/util
-[util-npm-badge]: https://img.shields.io/npm/v/ethereumjs-util.svg
-[util-npm-link]: https://www.npmjs.org/package/ethereumjs-util
-[util-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20util?label=issues
-[util-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+util"
-[util-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/Util/badge.svg
-[util-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22Util%22
-[util-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=util
-[util-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/util
-[vm-package]: ./packages/vm
-[vm-npm-badge]: https://img.shields.io/npm/v/@ethereumjs/vm.svg
-[vm-npm-link]: https://www.npmjs.com/package/@ethereumjs/vm
-[vm-issues-badge]: https://img.shields.io/github/issues/ethereumjs/ethereumjs-monorepo/package:%20vm?label=issues
-[vm-issues-link]: https://github.com/ethereumjs/ethereumjs-monorepo/issues?q=is%3Aopen+is%3Aissue+label%3A"package%3A+vm"
-[vm-actions-badge]: https://github.com/ethereumjs/ethereumjs-monorepo/workflows/VM/badge.svg
-[vm-actions-link]: https://github.com/ethereumjs/ethereumjs-monorepo/actions?query=workflow%3A%22VM%22
-[vm-coverage-badge]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/branch/master/graph/badge.svg?flag=vm
-[vm-coverage-link]: https://codecov.io/gh/ethereumjs/ethereumjs-monorepo/tree/master/packages/vm
+Most packages are [MPL-2.0](https://tldrlegal.com/license/mozilla-public-license-2.0-(mpl-2)) licensed; see each package folder for its license file.

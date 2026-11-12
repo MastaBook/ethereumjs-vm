@@ -1,8 +1,7 @@
 {
-  "extends": "@ethereumjs/config-typescript",
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "outDir": "test-build",
-    "lib": ["dom"],
-  }
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

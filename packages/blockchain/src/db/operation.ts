@@ -1,50 +1,51 @@
-import { BN } from 'ethereumjs-util'
+import { EthereumJSErrorWithoutCode, KeyEncoding, ValueEncoding } from '@ethereumjs/util'
+
 import {
   HEADS_KEY,
-  HEAD_HEADER_KEY,
   HEAD_BLOCK_KEY,
-  tdKey,
-  headerKey,
+  HEAD_HEADER_KEY,
   bodyKey,
-  numberToHashKey,
   hashToNumberKey,
-  CLIQUE_SIGNERS_KEY as CLIQUE_SIGNER_STATES_KEY,
-  CLIQUE_VOTES_KEY,
-  CLIQUE_BLOCK_SIGNERS_KEY,
-} from './constants'
+  headerKey,
+  numberToHashKey,
+  tdKey,
+} from './constants.ts'
 
-import { CacheMap } from './manager'
+import type { CacheMap } from './manager.ts'
 
-export enum DBTarget {
-  Heads,
-  HeadHeader,
-  HeadBlock,
-  HashToNumber,
-  NumberToHash,
-  TotalDifficulty,
-  Body,
-  Header,
-  CliqueSignerStates,
-  CliqueVotes,
-  CliqueBlockSigners,
-}
+/** Database target identifiers for blockchain persistence operations. */
+export type DBTarget = (typeof DBTarget)[keyof typeof DBTarget]
+
+export const DBTarget = {
+  Heads: 0,
+  HeadHeader: 1,
+  HeadBlock: 2,
+  HashToNumber: 3,
+  NumberToHash: 4,
+  TotalDifficulty: 5,
+  Body: 6,
+  Header: 7,
+  CliqueSignerStates: 8,
+  CliqueVotes: 9,
+  CliqueBlockSigners: 10,
+} as const
 
 /**
  * DBOpData is a type which has the purpose of holding the actual data of the Database Operation.
  * @hidden
  */
 export interface DBOpData {
-  type?: String
-  key: Buffer | string
-  keyEncoding: String
-  valueEncoding?: String
-  value?: Buffer | object
+  type?: 'put' | 'del'
+  key: Uint8Array | string
+  keyEncoding: KeyEncoding
+  valueEncoding?: ValueEncoding
+  value?: Uint8Array | object
 }
 
-// a Database Key is identified by a block hash, a block number, or both
+/** Key identifying a block by hash, number, or both. */
 export type DatabaseKey = {
-  blockNumber?: BN
-  blockHash?: Buffer
+  blockNumber?: bigint
+  blockHash?: Uint8Array
 }
 
 /**
@@ -60,22 +61,24 @@ export class DBOp {
 
     this.baseDBOp = {
       key: '',
-      keyEncoding: 'binary',
-      valueEncoding: 'binary',
+      keyEncoding: KeyEncoding.Bytes,
+      valueEncoding: ValueEncoding.Bytes,
     }
 
     switch (operationTarget) {
       case DBTarget.Heads: {
         this.baseDBOp.key = HEADS_KEY
-        this.baseDBOp.valueEncoding = 'json'
+        this.baseDBOp.valueEncoding = ValueEncoding.JSON
         break
       }
       case DBTarget.HeadHeader: {
         this.baseDBOp.key = HEAD_HEADER_KEY
+        this.baseDBOp.keyEncoding = KeyEncoding.String
         break
       }
       case DBTarget.HeadBlock: {
         this.baseDBOp.key = HEAD_BLOCK_KEY
+        this.baseDBOp.keyEncoding = KeyEncoding.String
         break
       }
       case DBTarget.HashToNumber: {
@@ -103,18 +106,6 @@ export class DBOp {
         this.cacheString = 'header'
         break
       }
-      case DBTarget.CliqueSignerStates: {
-        this.baseDBOp.key = CLIQUE_SIGNER_STATES_KEY
-        break
-      }
-      case DBTarget.CliqueVotes: {
-        this.baseDBOp.key = CLIQUE_VOTES_KEY
-        break
-      }
-      case DBTarget.CliqueBlockSigners: {
-        this.baseDBOp.key = CLIQUE_BLOCK_SIGNERS_KEY
-        break
-      }
     }
   }
 
@@ -123,15 +114,19 @@ export class DBOp {
   }
 
   // set operation: note: value/key is not in default order
-  public static set(operationTarget: DBTarget, value: Buffer | object, key?: DatabaseKey): DBOp {
+  public static set(
+    operationTarget: DBTarget,
+    value: Uint8Array | object,
+    key?: DatabaseKey,
+  ): DBOp {
     const dbOperation = new DBOp(operationTarget, key)
     dbOperation.baseDBOp.value = value
     dbOperation.baseDBOp.type = 'put'
 
-    if (operationTarget == DBTarget.Heads) {
-      dbOperation.baseDBOp.valueEncoding = 'json'
+    if (operationTarget === DBTarget.Heads) {
+      dbOperation.baseDBOp.valueEncoding = ValueEncoding.JSON
     } else {
-      dbOperation.baseDBOp.valueEncoding = 'binary'
+      dbOperation.baseDBOp.valueEncoding = ValueEncoding.Bytes
     }
 
     return dbOperation
@@ -144,13 +139,14 @@ export class DBOp {
   }
 
   public updateCache(cacheMap: CacheMap) {
-    if (this.cacheString && cacheMap[this.cacheString] && Buffer.isBuffer(this.baseDBOp.value)) {
-      if (this.baseDBOp.type == 'put') {
-        cacheMap[this.cacheString].set(this.baseDBOp.key, this.baseDBOp.value)
-      } else if (this.baseDBOp.type == 'del') {
+    if (this.cacheString !== undefined && cacheMap[this.cacheString] !== undefined) {
+      if (this.baseDBOp.type === 'put') {
+        this.baseDBOp.value instanceof Uint8Array &&
+          cacheMap[this.cacheString].set(this.baseDBOp.key, this.baseDBOp.value)
+      } else if (this.baseDBOp.type === 'del') {
         cacheMap[this.cacheString].del(this.baseDBOp.key)
       } else {
-        throw new Error('unsupported db operation on cache')
+        throw EthereumJSErrorWithoutCode('unsupported db operation on cache')
       }
     }
   }

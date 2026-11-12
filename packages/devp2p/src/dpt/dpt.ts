@@ -1,143 +1,199 @@
-import ms from 'ms'
-import { EventEmitter } from 'events'
-import { publicKeyCreate } from 'secp256k1'
-import { randomBytes } from 'crypto'
-import { debug as createDebugLogger } from 'debug'
-import { buffer2int, pk2id } from '../util'
-import { KBucket } from './kbucket'
-import { BanList } from './ban-list'
-import { Server as DPTServer } from './server'
-import { DNS } from '../dns'
+import {
+  EthereumJSErrorWithoutCode,
+  bytesToInt,
+  bytesToUnprefixedHex,
+  randomBytes,
+} from '@ethereumjs/util'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { EventEmitter } from 'eventemitter3'
 
-const debug = createDebugLogger('devp2p:dpt')
+import { markChainDirectoryPeer } from '../discovery/directoryPeer.ts'
+import { DNS } from '../dns/index.ts'
+import { devp2pDebug, pk2id } from '../util.ts'
 
-export interface PeerInfo {
-  id?: Uint8Array | Buffer
-  address?: string
-  udpPort?: number | null
-  tcpPort?: number | null
+import { BanList } from './ban-list.ts'
+import { KBucket } from './kbucket.ts'
+import { JSONNodeStore, MemoryNodeStore } from './nodeStore.ts'
+import { Server as DPTServer } from './server.ts'
+
+import type { Common } from '@ethereumjs/common'
+import type { Debugger } from 'debug'
+import type { DPTEvent, DPTOptions, PeerInfo } from '../types.ts'
+import type { NodeStore } from './nodeStore.ts'
+
+const DEBUG_BASE_NAME = 'dpt'
+
+function routableDiscoveryAddress(address: string | undefined): boolean {
+  return address !== undefined && address !== '' && address !== '0.0.0.0' && address !== '::'
 }
 
-export interface DPTOptions {
-  /**
-   * Timeout for peer requests
-   *
-   * Default: 10s
-   */
-  timeout?: number
-
-  /**
-   * Network info to send a long a request
-   *
-   * Default: 0.0.0.0, no UDP or TCP port provided
-   */
-  endpoint?: PeerInfo
-
-  /**
-   * Function for socket creation
-   *
-   * Default: dgram-created socket
-   */
-  createSocket?: Function
-
-  /**
-   * Interval for peer table refresh
-   *
-   * Default: 60s
-   */
-  refreshInterval?: number
-
-  /**
-   * Toggles whether or not peers should be queried with 'findNeighbours'
-   * to discover more peers
-   *
-   * Default: true
-   */
-  shouldFindNeighbours?: boolean
-
-  /**
-   * Toggles whether or not peers should be discovered by querying EIP-1459 DNS lists
-   *
-   * Default: false
-   */
-  shouldGetDnsPeers?: boolean
-
-  /**
-   * Max number of candidate peers to retrieve from DNS records when
-   * attempting to discover new nodes
-   *
-   * Default: 25
-   */
-  dnsRefreshQuantity?: number
-
-  /**
-   * EIP-1459 ENR tree urls to query for peer discovery
-   *
-   * Default: (network dependent)
-   */
-  dnsNetworks?: string[]
-
-  /**
-   * DNS server to query DNS TXT records from for peer discovery
-   */
-  dnsAddr?: string
+function isTcpReadyDirectoryPeer(peer: PeerInfo): boolean {
+  return (
+    peer.id !== undefined &&
+    routableDiscoveryAddress(peer.address) &&
+    peer.tcpPort !== undefined &&
+    peer.tcpPort !== null
+  )
 }
 
-export class DPT extends EventEmitter {
-  privateKey: Buffer
-  banlist: BanList
-  dns: DNS
+function peerMatchesChainFork(peer: PeerInfo, common: Common | undefined): boolean {
+  if (common === undefined) return true
+  if (peer.ethForkId === undefined) return false
+  return common.hardforkForForkHash(peer.ethForkId.forkHash) !== null
+}
 
-  private _id: Buffer | undefined
-  private _kbucket: KBucket
-  private _server: DPTServer
-  private _refreshIntervalId: NodeJS.Timeout
-  private _refreshIntervalSelectionCounter: number = 0
-  private _shouldFindNeighbours: boolean
-  private _shouldGetDnsPeers: boolean
-  private _dnsRefreshQuantity: number
-  private _dnsNetworks: string[]
-  private _dnsAddr: string
+/** Cap TCP dial fan-out per DNS refresh (EIP-1459 may return many ENRs). */
+const MAX_DNS_PEER_NEW_PER_REFRESH = 16
 
-  constructor(privateKey: Buffer, options: DPTOptions) {
-    super()
+/** UDP endpoint of a remote discovery node (never this process). */
+function remoteDiscoveryLabel(peer: PeerInfo): string {
+  const host = peer.address ?? 'unknown-host'
+  const port = peer.udpPort ?? peer.tcpPort
+  return port !== undefined ? `${host}:${port}` : host
+}
 
-    this.privateKey = Buffer.from(privateKey)
-    this._id = pk2id(Buffer.from(publicKeyCreate(this.privateKey, false)))
-    this._shouldFindNeighbours = options.shouldFindNeighbours === false ? false : true
+/** Distributed peer table (DPT) for Ethereum UDP node discovery and DNS ENR refresh. */
+export class DPT {
+  public events: EventEmitter<DPTEvent>
+  protected _privateKey: Uint8Array
+  protected _banlist: BanList
+  protected _dns: DNS
+  private _debug: Debugger
+
+  public readonly id: Uint8Array | undefined
+  protected _kbucket: KBucket
+  protected _server: DPTServer
+  protected _refreshIntervalId: NodeJS.Timeout
+  protected _refreshIntervalSelectionCounter: number = 0
+  protected _shouldFindNeighbours: boolean
+  protected _shouldGetDnsPeers: boolean
+  protected _dnsRefreshQuantity: number
+  protected _dnsNetworks: string[]
+  protected _dnsAddr: string
+
+  protected _onlyConfirmed: boolean
+  protected _confirmedPeers: Set<string>
+
+  protected _keccakFunction: (msg: Uint8Array) => Uint8Array
+  protected _nodeStore: NodeStore
+  protected _revalidateCounter = 0
+  protected _revalidatePeers: boolean
+  protected _maxInFlightPings: number | undefined
+  protected _discoveryPaused = false
+  protected _peerBatchQueue: PeerInfo[] = []
+  protected _inFlightPings = 0
+  protected _discoveryMetrics: import('../discovery/metrics.ts').DiscoveryMetrics | undefined
+  protected _common: Common | undefined
+
+  private DEBUG: boolean
+
+  /** Stored nodes loaded from disk at startup; verified into k-bucket once the UDP socket binds. */
+  protected _storedBootstrapNodes: PeerInfo[] = []
+
+  constructor(privateKey: Uint8Array, options: DPTOptions) {
+    this.events = new EventEmitter<DPTEvent>()
+    this._privateKey = privateKey
+    this.id = pk2id(secp256k1.getPublicKey(this._privateKey, false))
+    this._shouldFindNeighbours = options.shouldFindNeighbours ?? true
     this._shouldGetDnsPeers = options.shouldGetDnsPeers ?? false
     // By default, tries to connect to 12 new peers every 3s
     this._dnsRefreshQuantity = Math.floor((options.dnsRefreshQuantity ?? 25) / 2)
     this._dnsNetworks = options.dnsNetworks ?? []
-    this._dnsAddr = options.dnsAddr ?? '8.8.8.8'
+    this._dnsAddr = options.dnsAddr ?? ''
+    this._discoveryMetrics = options.discoveryMetrics
+    this._common = options.common
+    this._discoveryMetrics?.setDnsResolver(
+      options.dnsAddr !== undefined && options.dnsAddr.length > 0 ? options.dnsAddr : 'system',
+    )
 
-    this.dns = new DNS({ dnsServerAddress: this._dnsAddr })
-    this.banlist = new BanList()
+    this._dns = new DNS({
+      common: options.common,
+      ...(options.dnsAddr !== undefined && options.dnsAddr.length > 0
+        ? { dnsServerAddress: options.dnsAddr }
+        : {}),
+    })
+    this._banlist = new BanList()
+    this._nodeStore =
+      options.nodeStore ??
+      (options.nodeStorePath !== undefined
+        ? new JSONNodeStore(options.nodeStorePath)
+        : new MemoryNodeStore())
 
-    this._kbucket = new KBucket(this._id)
-    this._kbucket.on('added', (peer: PeerInfo) => this.emit('peer:added', peer))
-    this._kbucket.on('removed', (peer: PeerInfo) => this.emit('peer:removed', peer))
-    this._kbucket.on('ping', this._onKBucketPing.bind(this))
+    this._revalidatePeers = options.revalidatePeers ?? true
+    this._onlyConfirmed = options.onlyConfirmed ?? false
+    this._confirmedPeers = new Set()
+    this._maxInFlightPings = options.maxInFlightPings
 
-    this._server = new DPTServer(this, this.privateKey, {
+    this._keccakFunction = options.common?.customCrypto.keccak256 ?? keccak_256
+
+    this._kbucket = new KBucket(this.id)
+    this._kbucket.events.on('added', (peer: PeerInfo) => this.events.emit('peer:added', peer))
+    this._kbucket.events.on('removed', (peer: PeerInfo) => this.events.emit('peer:removed', peer))
+    this._kbucket.events.on('ping', this._onKBucketPing.bind(this))
+
+    if (this._shouldFindNeighbours) {
+      for (const n of this._nodeStore.list()) {
+        if (n.failCount >= 3 || !routableDiscoveryAddress(n.address) || !(n.udpPort > 0)) continue
+        try {
+          const idHex = n.id.startsWith('0x') ? n.id.slice(2) : n.id
+          if (idHex.length !== 128) continue
+          const id = new Uint8Array(64)
+          for (let i = 0; i < 64; i++) {
+            id[i] = Number.parseInt(idHex.slice(i * 2, i * 2 + 2), 16)
+          }
+          this._storedBootstrapNodes.push({
+            id,
+            address: n.address,
+            udpPort: n.udpPort,
+            tcpPort: n.tcpPort ?? n.udpPort,
+          })
+        } catch {
+          // ignore malformed stored node
+        }
+      }
+    }
+
+    this._server = new DPTServer(this, this._privateKey, {
       timeout: options.timeout,
       endpoint: options.endpoint,
       createSocket: options.createSocket,
+      common: options.common,
+      discoveryMetrics: options.discoveryMetrics,
+      ethyDiscoveryTag: options.ethyDiscoveryTag,
     })
-    this._server.once('listening', () => this.emit('listening'))
-    this._server.once('close', () => this.emit('close'))
-    this._server.on('error', (err) => this.emit('error', err))
-
+    this._server.events.once('listening', () => {
+      this._server.syncEndpointFromSocket(options.endpoint?.tcpPort ?? 0)
+      this.events.emit('listening')
+      if (this._shouldFindNeighbours && this._storedBootstrapNodes.length > 0) {
+        const seeds = this._storedBootstrapNodes.splice(0, 8)
+        for (const seed of seeds) {
+          void this.bootstrap(seed).catch(() => {})
+        }
+      }
+    })
+    this._server.events.once('close', () => this.events.emit('close'))
+    this._server.events.on('error', (err) => this.events.emit('error', err))
+    this._debug = devp2pDebug.extend(DEBUG_BASE_NAME)
     // When not using peer neighbour discovery we don't add peers here
     // because it results in duplicate calls for the same targets
-    this._server.on('peers', (peers) => {
+    this._server.events.on('peers', (peers) => {
       if (!this._shouldFindNeighbours) return
       this._addPeerBatch(peers)
     })
 
     // By default calls refresh every 3s
-    const refreshIntervalSubdivided = Math.floor((options.refreshInterval ?? ms('60s')) / 10)
-    this._refreshIntervalId = setInterval(() => this.refresh(), refreshIntervalSubdivided)
+    const refreshIntervalSubdivided = Math.floor((options.refreshInterval ?? 60000) / 10) // 60 sec * 1000
+    this._refreshIntervalId = setInterval(() => {
+      void this.refresh().catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (this.DEBUG) {
+          this._debug(`refresh failed: ${msg}`)
+        }
+      })
+    }, refreshIntervalSubdivided)
+
+    this.DEBUG = globalThis.process?.env?.DEBUG?.includes('ethjs') ?? false
   }
 
   bind(...args: any[]): void {
@@ -149,56 +205,147 @@ export class DPT extends EventEmitter {
     this._server.destroy(...args)
   }
 
+  /** Pause or resume neighbour lookup and DNS-driven peer batches (refresh timer stays armed). */
+  setDiscoveryPaused(paused: boolean): void {
+    if (this._discoveryPaused === paused) return
+    this._discoveryPaused = paused
+    if (paused) {
+      this._peerBatchQueue = []
+    } else {
+      void this.refresh()
+      this._drainPeerBatchQueue()
+    }
+  }
+
+  isDiscoveryPaused(): boolean {
+    return this._discoveryPaused
+  }
+
   _onKBucketPing(oldPeers: PeerInfo[], newPeer: PeerInfo): void {
-    if (this.banlist.has(newPeer)) return
+    if (this._banlist.has(newPeer)) return
 
     let count = 0
     let err: Error | null = null
     for (const peer of oldPeers) {
       this._server
         .ping(peer)
-        .catch((_err: Error) => {
-          this.banlist.add(peer, ms('5m'))
-          this._kbucket.remove(peer)
-          err = err || _err
-        })
         .then(() => {
           if (++count < oldPeers.length) return
-          if (err === null) this.banlist.add(newPeer, ms('5m'))
-          else this._kbucket.add(newPeer)
+          if (err === null) {
+            this._banRemote(newPeer, 300000, 'k-bucket full; existing remotes answered')
+          } else this._kbucket.add(newPeer)
+        })
+        .catch((_err: Error) => {
+          this._banRemote(peer, 300000, `k-bucket ping failed: ${_err.message}`)
+          this._kbucket.remove(peer)
+          err = err ?? _err
         })
     }
   }
 
   _addPeerBatch(peers: PeerInfo[]): void {
-    const DIFF_TIME_MS = 200
-    let ms = 0
-    for (const peer of peers) {
-      setTimeout(() => {
-        this.addPeer(peer).catch((error) => {
-          this.emit('error', error)
+    if (this._discoveryPaused) return
+    if (this._maxInFlightPings === undefined) {
+      const DIFF_TIME_MS = 200
+      let ms = 0
+      for (const peer of peers) {
+        setTimeout(() => {
+          this.addPeer(peer).catch((error) => {
+            this.events.emit('error', error)
+          })
+        }, ms)
+        ms += DIFF_TIME_MS
+      }
+      return
+    }
+    this._peerBatchQueue.push(...peers)
+    this._drainPeerBatchQueue()
+  }
+
+  _drainPeerBatchQueue(): void {
+    if (this._discoveryPaused || this._maxInFlightPings === undefined) return
+    while (this._inFlightPings < this._maxInFlightPings && this._peerBatchQueue.length > 0) {
+      const peer = this._peerBatchQueue.shift()!
+      this._inFlightPings++
+      this.addPeer(peer)
+        .catch((error) => {
+          this.events.emit('error', error)
         })
-      }, ms)
-      ms += DIFF_TIME_MS
+        .finally(() => {
+          this._inFlightPings--
+          this._drainPeerBatchQueue()
+        })
     }
   }
 
   async bootstrap(peer: PeerInfo): Promise<void> {
+    this._discoveryMetrics?.recordBootstrapAttempt()
     try {
       peer = await this.addPeer(peer)
-    } catch (error) {
-      this.emit('error', error)
+      if (peer.id !== undefined) {
+        // Using deprecated bytesToUnprefixedHex for performance: used as Set keys for peer tracking.
+        this._confirmedPeers.add(bytesToUnprefixedHex(peer.id))
+      }
+      this._discoveryMetrics?.recordBootstrapOk()
+    } catch (error: any) {
+      const msg = error instanceof Error ? error.message : String(error)
+      this._discoveryMetrics?.recordBootstrapFail(msg)
+      this.events.emit('error', error)
       return
     }
-    if (!this._id) return
+    if (!this.id) return
     if (this._shouldFindNeighbours) {
-      this._server.findneighbours(peer, this._id)
+      // Rotate random target IDs after the initial self-ID lookup so k-buckets fill across the full key space
+      this._server.findneighbours(peer, this.id)
+      setTimeout(() => {
+        if (this._shouldFindNeighbours && !this._discoveryPaused) {
+          this._server.findneighbours(peer, randomBytes(64))
+        }
+      }, 1500)
     }
   }
 
-  async addPeer(obj: PeerInfo): Promise<any> {
-    if (this.banlist.has(obj)) throw new Error('Peer is banned')
-    debug(`attempt adding peer ${obj.address}:${obj.udpPort}`)
+  /**
+   * Ping `peer`, answer its ENR request, and return the neighbours it sends back.
+   * Mainnet bootnodes reply with a peer list only after the ENR exchange.
+   */
+  async lookupNeighbours(peer: PeerInfo, waitMs = 2000): Promise<PeerInfo[]> {
+    const bonded = await this.addPeer(peer)
+    const found: PeerInfo[] = []
+    const onPeers = (peers: PeerInfo[]) => {
+      found.push(...peers)
+    }
+    this._server.events.on('peers', onPeers)
+    try {
+      if (this.id !== undefined) {
+        // First query prompts the bootnode to ping us and request our ENR.
+        this._server.findneighbours(bonded, this.id)
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        this._server.findneighbours(bonded, this.id)
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    } finally {
+      this._server.events.off('peers', onPeers)
+    }
+    return found
+  }
+
+  async addPeer(obj: PeerInfo): Promise<PeerInfo> {
+    if (!routableDiscoveryAddress(obj.address)) {
+      throw EthereumJSErrorWithoutCode(
+        `Skipped remote ${obj.address ?? 'unspecified'}:${String(obj.udpPort ?? '?')}: not a routable discovery address`,
+      )
+    }
+    if (this._banlist.has(obj)) {
+      const label = remoteDiscoveryLabel(obj)
+      this._discoveryMetrics?.recordDptBanSkip(label)
+      throw EthereumJSErrorWithoutCode(
+        `Skipped remote ${label}: on our discovery ban list (not this node)`,
+      )
+    }
+    if (this.DEBUG) {
+      this._debug(`attempt adding peer ${obj.address}:${obj.udpPort}`)
+    }
 
     // check k-bucket first
     const peer = this._kbucket.get(obj)
@@ -206,17 +353,121 @@ export class DPT extends EventEmitter {
 
     // check that peer is alive
     try {
-      const peer = await this._server.ping(obj)
-      this.emit('peer:new', peer)
+      const peer = (await this._server.ping(obj)) as PeerInfo
+      if (obj.chainDirectory === true) peer.chainDirectory = true
       this._kbucket.add(peer)
+      if (peer.id !== undefined) {
+        this._nodeStore.put({
+          id: bytesToUnprefixedHex(peer.id),
+          address: peer.address!,
+          udpPort: peer.udpPort!,
+          tcpPort: peer.tcpPort,
+          lastPong: Date.now(),
+          failCount: 0,
+        })
+      }
+      // When a Common instance is set, verify the neighbour's EIP-868 eth forkHash via ENRRequest
+      // before emitting peer:new to RLPx so alien chains never touch TCP. If we are behind NAT
+      // and the remote drops ENRRequest (missing reverse ping bond), fall back to TCP dial after 600ms
+      // if the peer was not banned by a mismatched ENRResponse.
+      if (
+        this._common !== undefined &&
+        obj.chainDirectory !== true &&
+        obj.ethForkId === undefined
+      ) {
+        this._server.requestEnr(peer)
+        if (peer.id !== undefined && typeof peer.tcpPort === 'number' && peer.tcpPort > 0) {
+          const idHex = bytesToUnprefixedHex(peer.id)
+          const timer = setTimeout(() => {
+            if (this._discoveryPaused || this._banlist.has(peer)) return
+            if (this._confirmedPeers.has(idHex)) return
+            this.events.emit('peer:new', peer)
+          }, 600)
+          timer.unref?.()
+        }
+      } else {
+        this.events.emit('peer:new', peer)
+      }
       return peer
-    } catch (err) {
-      this.banlist.add(obj, ms('5m'))
-      throw err
+    } catch (err: any) {
+      this._recordFail(obj)
+      const cause = err instanceof Error ? err.message : String(err)
+      this._banRemote(obj, 300000, `ping failed: ${cause}`)
+      throw EthereumJSErrorWithoutCode(
+        `Banned remote ${remoteDiscoveryLabel(obj)} for 5 min after discovery ping failed (${cause})`,
+      )
     }
   }
 
-  getPeer(obj: string | Buffer | PeerInfo) {
+  updatePeerEndpoint(id: Uint8Array, endpoint: PeerInfo): void {
+    const peer = this._kbucket.get(id)
+    if (peer === null) return
+    const updated = { ...peer, ...endpoint, id }
+    this._kbucket.remove(id)
+    this._kbucket.add(updated)
+    this._nodeStore.put({
+      id: bytesToUnprefixedHex(id),
+      address: updated.address!,
+      udpPort: updated.udpPort!,
+      tcpPort: updated.tcpPort,
+      lastPong: Date.now(),
+      failCount: 0,
+    })
+  }
+
+  _recordFail(obj: PeerInfo): void {
+    if (obj.id === undefined) return
+    const id = bytesToUnprefixedHex(obj.id)
+    const prev = this._nodeStore.get(id)
+    const failCount = (prev?.failCount ?? 0) + 1
+    if (failCount >= 3) {
+      return
+    }
+    this._nodeStore.put({
+      id,
+      address: obj.address ?? prev?.address ?? '',
+      udpPort: obj.udpPort ?? prev?.udpPort ?? 0,
+      tcpPort: obj.tcpPort ?? prev?.tcpPort,
+      lastPong: prev?.lastPong,
+      failCount,
+    })
+  }
+
+  async _revalidateOnePeer(): Promise<void> {
+    const peers = this.getPeers()
+    if (peers.length === 0) return
+    const stored = this._nodeStore
+      .list()
+      .filter((n) => peers.some((p) => p.id && bytesToUnprefixedHex(p.id) === n.id))
+      .sort((a, b) => (a.lastPong ?? 0) - (b.lastPong ?? 0))
+    const target = stored[0]
+    if (!target) return
+    const peer = peers.find((p) => p.id && bytesToUnprefixedHex(p.id) === target.id)
+    if (!peer) return
+    try {
+      await this._server.ping(peer)
+      this._nodeStore.put({ ...target, lastPong: Date.now(), failCount: 0 })
+    } catch {
+      this._recordFail(peer)
+      this.removePeer(peer)
+    }
+  }
+
+  /**
+   * Add peer to a confirmed list of peers (peers meeting some
+   * level of quality, e.g. being on the same network) to allow
+   * for a more selective findNeighbours request and sending
+   * (with activated `onlyConfirmed` setting)
+   *
+   * @param id Unprefixed hex id
+   */
+  confirmPeer(id: string) {
+    if (this._confirmedPeers.size < 5000) {
+      this._confirmedPeers.add(id)
+    }
+  }
+
+  getPeer(obj: string | Uint8Array | PeerInfo) {
     return this._kbucket.get(obj)
   }
 
@@ -224,53 +475,148 @@ export class DPT extends EventEmitter {
     return this._kbucket.getAll()
   }
 
-  getClosestPeers(id: string) {
-    return this._kbucket.closest(id)
+  numPeers() {
+    return this._kbucket.getAll().length
   }
 
-  removePeer(obj: any) {
+  getClosestPeers(id: Uint8Array) {
+    let peers = this._kbucket.closest(id)
+    if (this._onlyConfirmed && this._confirmedPeers.size > 0) {
+      // Using deprecated bytesToUnprefixedHex for performance: used as Set keys for peer filtering.
+      peers = peers.filter((peer) =>
+        this._confirmedPeers.has(bytesToUnprefixedHex(peer.id as Uint8Array)) ? true : false,
+      )
+    }
+    return peers
+  }
+
+  removePeer(obj: string | PeerInfo | Uint8Array) {
+    const peer = this._kbucket.get(obj)
+    if (peer?.id !== undefined) {
+      // Using deprecated bytesToUnprefixedHex for performance: used as Set keys for peer tracking.
+      this._confirmedPeers.delete(bytesToUnprefixedHex(peer.id as Uint8Array))
+    }
     this._kbucket.remove(obj)
   }
 
-  banPeer(obj: string | Buffer | PeerInfo, maxAge?: number) {
-    this.banlist.add(obj, maxAge)
+  banPeer(obj: string | PeerInfo | Uint8Array, maxAge?: number) {
+    this._banRemote(obj, maxAge, 'explicit ban')
     this._kbucket.remove(obj)
+  }
+
+  _banRemote(obj: string | PeerInfo | Uint8Array, maxAge: number | undefined, cause: string): void {
+    this._banlist.add(obj, maxAge)
+    if (typeof obj !== 'string' && !(obj instanceof Uint8Array)) {
+      this._discoveryMetrics?.recordDptBan(remoteDiscoveryLabel(obj), cause)
+    }
+  }
+
+  /** Refresh discv4 `from` endpoint from the bound UDP socket and TCP listen port. */
+  syncEndpointFromSocket(tcpListenPort: number): PeerInfo {
+    return this._server.syncEndpointFromSocket(tcpListenPort)
   }
 
   async getDnsPeers(): Promise<PeerInfo[]> {
-    return this.dns.getPeers(this._dnsRefreshQuantity, this._dnsNetworks)
+    return this._dns.getPeers(this._dnsRefreshQuantity, this._dnsNetworks)
   }
 
   async refresh(): Promise<void> {
+    if (this._discoveryPaused) {
+      if (this._revalidatePeers) {
+        this._revalidateCounter = (this._revalidateCounter + 1) % 10
+        if (this._revalidateCounter === 0) {
+          await this._revalidateOnePeer().catch(() => {})
+        }
+      }
+      return
+    }
+
+    if (this._revalidatePeers) {
+      this._revalidateCounter = (this._revalidateCounter + 1) % 10
+      if (this._revalidateCounter === 0) {
+        await this._revalidateOnePeer().catch(() => {})
+      }
+    }
+
     if (this._shouldFindNeighbours) {
       // Rotating selection counter going in loop from 0..9
       this._refreshIntervalSelectionCounter = (this._refreshIntervalSelectionCounter + 1) % 10
 
       const peers = this.getPeers()
-      debug(
-        `call .refresh() (selector ${this._refreshIntervalSelectionCounter}) (${peers.length} peers in table)`
-      )
+      if (this.DEBUG) {
+        this._debug(
+          `call .refresh() (selector ${this._refreshIntervalSelectionCounter}) (${peers.length} peers in table)`,
+        )
+      }
 
       for (const peer of peers) {
         // Randomly distributed selector based on peer ID
         // to decide on subdivided execution
-        const selector = buffer2int((peer.id! as Buffer).slice(0, 1)) % 10
-        if (selector === this._refreshIntervalSelectionCounter) {
+        const selector = bytesToInt((peer.id as Uint8Array).subarray(0, 1)) % 10
+        let confirmed = true
+        if (this._onlyConfirmed && this._confirmedPeers.size > 0) {
+          // Using deprecated bytesToUnprefixedHex for performance: used as Set keys for peer filtering.
+          const id = bytesToUnprefixedHex(peer.id as Uint8Array)
+          if (!this._confirmedPeers.has(id)) {
+            confirmed = false
+          }
+        }
+        if (confirmed && selector === this._refreshIntervalSelectionCounter) {
           this._server.findneighbours(peer, randomBytes(64))
         }
       }
     }
 
     if (this._shouldGetDnsPeers) {
-      const dnsPeers = await this.getDnsPeers()
+      let dnsPeers: PeerInfo[] = []
+      this._discoveryMetrics?.recordDnsAttempt()
+      try {
+        dnsPeers = await this.getDnsPeers()
+        this._discoveryMetrics?.recordDnsPeersAdded(dnsPeers.length)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        this._discoveryMetrics?.recordDnsError(msg)
+        if (this.DEBUG) {
+          this._debug(`DNS peer lookup failed: ${msg}`)
+        }
+      }
 
-      debug(
-        `.refresh() Adding ${dnsPeers.length} from DNS tree, (${
-          this.getPeers().length
-        } current peers in table)`
-      )
+      if (this.DEBUG) {
+        this._debug(
+          `.refresh() Adding ${dnsPeers.length} from DNS tree, (${
+            this.getPeers().length
+          } current peers in table)`,
+        )
+      }
 
-      this._addPeerBatch(dnsPeers)
+      this._feedDnsDirectoryPeers(dnsPeers)
+    }
+  }
+
+  /** Verified EIP-1459 peers dial on TCP directly; also bond up to 4 seeds per refresh into DPT when neighbour discovery is on. */
+  _feedDnsDirectoryPeers(dnsPeers: PeerInfo[]): void {
+    let emitted = 0
+    let bondedSeeds = 0
+    for (const raw of dnsPeers) {
+      if (emitted >= MAX_DNS_PEER_NEW_PER_REFRESH) break
+      const peer = markChainDirectoryPeer({ ...raw })
+      if (!isTcpReadyDirectoryPeer(peer)) continue
+      if (!peerMatchesChainFork(peer, this._common)) {
+        this._discoveryMetrics?.recordDnsForkRejected()
+        continue
+      }
+      emitted++
+      this.events.emit('peer:new', peer)
+      if (
+        this._shouldFindNeighbours &&
+        bondedSeeds < 4 &&
+        typeof peer.udpPort === 'number' &&
+        peer.udpPort > 0 &&
+        this._kbucket.getAll().length < 64
+      ) {
+        bondedSeeds++
+        void this.bootstrap(peer).catch(() => {})
+      }
     }
   }
 }

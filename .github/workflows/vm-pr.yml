@@ -1,271 +1,190 @@
 name: VM
 on:
-  pull_request:
-    types: [opened, reopened, synchronize]
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+      run-coverage:
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+      run-coverage:
+        required: false
+        type: boolean
+        default: true
 
 env:
   cwd: ${{github.workspace}}/packages/vm
+  RUN_COVERAGE: ${{ inputs.run-coverage }}
+  EST_FIXTURES_CACHE: ${{ github.workspace }}/.est-fixtures-cache
+  LEGACY_ETHEREUM_TESTS_CACHE: ${{ github.workspace }}/.legacy-ethereum-tests-cache
 
 defaults:
   run:
     working-directory: packages/vm
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-vm-pr
+  cancel-in-progress: true
+
 jobs:
   vm-api:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      - run: |
+          if [ "$RUN_COVERAGE" = "false" ]; then
+            npm run test:API
+          else
+            npm run coverage
+          fi
+
+      - if: env.RUN_COVERAGE != 'false'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
-          submodules: recursive
-
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-12-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
-
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run coverage
-      
-      - uses: codecov/codecov-action@v1
-        with:
-          file: ${{ env.cwd }}/coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ env.cwd }}/coverage/lcov.info
           flags: vm
 
-      - run: npm run test:API
-      - run: npm run test:API:browser
-      - run: npm run lint
-  
-  vm-state:
+  # Recent EST forks are opt-in (`test: consensus`). A PR without that
+  # label still merges: skipped jobs count as success on Build / CI.
+  # Smoke is the cheap stand-in on those PRs. Master and manual runs keep
+  # the recent forks. `test: all hardforks` replaces them with the full matrix.
+  vm-consensus-smoke:
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'test: consensus') == false &&
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'test: all hardforks') == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - run: npm run test:consensus:smoke
+
+  consensus-est-fork-matrix:
+    if: "contains(join(github.event.pull_request.labels.*.name, ' '), 'test: all hardforks')"
+    runs-on: ubuntu-latest
+    outputs:
+      forks: ${{ steps.matrix.outputs.forks }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - id: matrix
+        run: echo "forks=$(npx tsx ./test/consensus/scripts/printEstForkMatrix.ts)" >> $GITHUB_OUTPUT
+
+  vm-consensus-est-recent:
+    if: >-
+      (
+        github.event_name != 'pull_request' ||
+        contains(join(github.event.pull_request.labels.*.name, ' '), 'test: consensus')
+      ) &&
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'test: all hardforks') == false
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        fork: [
-          'Berlin',
-          'Istanbul',
-          'MuirGlacier'
-        ]
       fail-fast: false
+      matrix:
+        fork: [Prague, Osaka, Amsterdam]
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - uses: ./.github/actions/consensus-fork
         with:
-          submodules: recursive
+          source: tests
+          manifest: fixtures.json
+          cache-key: est-extract-tests-${{ hashFiles('packages/vm/test/consensus/fixtures.json') }}-${{ matrix.fork }}
+          fork: ${{ matrix.fork }}
+          artifact-prefix: consensus-est-failures
 
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-12-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
-
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run test:state -- --fork=${{ matrix.fork }} --verify-test-amount-alltests
-
-  vm-state-extended:
-    if: contains(join(github.event.pull_request.labels.*.name, ' '), 'Test all hardforks')
+  vm-consensus-est-all-forks:
+    needs: consensus-est-fork-matrix
+    if: "contains(join(github.event.pull_request.labels.*.name, ' '), 'test: all hardforks')"
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        fork: [
-          'Berlin',
-          'Petersburg',
-          'Constantinople',
-          'Byzantium',
-          'SpuriousDragon',
-          'TangerineWhistle',
-          'Homestead',
-          'Chainstart'
-        ]
       fail-fast: false
+      matrix:
+        fork: ${{ fromJson(needs.consensus-est-fork-matrix.outputs.forks) }}
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - uses: ./.github/actions/consensus-fork
         with:
-          submodules: recursive
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-12-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
+          source: tests
+          manifest: fixtures.json
+          cache-key: est-extract-tests-${{ hashFiles('packages/vm/test/consensus/fixtures.json') }}-${{ matrix.fork }}
+          fork: ${{ matrix.fork }}
+          artifact-prefix: consensus-est-failures
 
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run test:state -- --fork=${{ matrix.fork }} --verify-test-amount-alltests
-
-  vm-blockchain:
+  vm-consensus-bogota:
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'test: bogota') &&
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'skip dev VM') == false
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        # Args to pass to the tester. Note that some have splitted the slow tests and only 
-        #   running those: these are only on forks where that is applicable (see PR #489 for numbers on these)
-        
-        # Tests were splitted with --dir and --excludeDir to balance execution times below the 9min mark.
-        args: [
-          '--fork=Istanbul --dir=GeneralStateTests/stTimeConsuming --expected-test-amount=15561',
-          '--fork=Istanbul --excludeDir=stTimeConsuming --expected-test-amount=19817',
-          '--fork=Berlin --dir=GeneralStateTests/stTimeConsuming',
-          '--fork=Berlin --excludeDir=stTimeConsuming'
-        ]
       fail-fast: false
+      matrix:
+        fork: [Bogota, AmsterdamToBogotaAtTime15k]
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - uses: ./.github/actions/consensus-fork
         with:
-          submodules: recursive
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-12-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
+          source: bogota-devnet
+          manifest: fixtures.bogota.json
+          cache-key: est-extract-bogota-${{ hashFiles('packages/vm/test/consensus/fixtures.bogota.json') }}-${{ matrix.fork }}
+          fork: ${{ matrix.fork }}
+          artifact-prefix: consensus-bogota-failures
 
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run test:blockchain -- ${{ matrix.args }}
-
-  vm-blockchain-extended:
-    if: contains(join(github.event.pull_request.labels.*.name, ' '), 'Test all hardforks')
+  vm-consensus-legacy:
+    if: "contains(join(github.event.pull_request.labels.*.name, ' '), 'test: all hardforks')"
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        # Args to pass to the tester. Note that some have splitted the slow tests and only 
-        #   running those: these are only on forks where that is applicable (see PR #489 for numbers on these)
-        
-        # Tests were splitted with --dir and --excludeDir to balance execution times below the 9min mark.
-        args: [
-          '--fork=Berlin --expected-test-amount=33',
-          '--fork=Constantinople --dir=GeneralStateTests/stTimeConsuming --expected-test-amount=15561',
-          '--fork=Constantinople --excludeDir=stTimeConsuming --expected-test-amount=17193',
-          '--fork=Petersburg --dir=GeneralStateTests/stTimeConsuming --expected-test-amount=15561',
-          '--fork=Petersburg --excludeDir=stTimeConsuming --expected-test-amount=17174',
-          '--fork=Homestead --expected-test-amount=6997',
-          '--fork=Chainstart --expected-test-amount=4385'
-        ]
       fail-fast: false
+      matrix:
+        legacy_fork:
+          [
+            'Prague',
+            'Cancun',
+            'Shanghai',
+            'Paris',
+            'London',
+            'Berlin',
+            'Istanbul',
+            'ConstantinopleFix',
+            'Byzantium',
+            'EIP158',
+            'EIP150',
+            'Homestead',
+            'Frontier',
+          ]
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
         with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+      - uses: ./.github/actions/legacy-ethereum-tests
         with:
-          submodules: recursive
+          slice: blockchain
+          cache-key: legacy-tests-${{ hashFiles('config/legacy-ethereum-tests.json') }}-blockchain
 
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-12-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
-
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run test:blockchain -- ${{ matrix.args }}
-
-  vm-benchmarks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-node@v1
-        with:
-          node-version: 12.x
-      - uses: actions/checkout@v2
-        with:
-          submodules: recursive
-
-      - name: Dependency cache
-        uses: actions/cache@v2
-        id: cache
-        with:
-          key: VM-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
-          path: '**/node_modules'
-
-      # Installs root dependencies, ignoring Bootstrap All script.
-      # Bootstraps the current package only
-      - run: npm install --ignore-scripts && npm run bootstrap:vm
-        if: steps.cache.outputs.cache-hit != 'true'
-        working-directory: ${{github.workspace}}
-
-      # Builds current package and the ones it depends from.
-      - run: npm run build:vm
-        working-directory: ${{github.workspace}}
-
-      - run: npm run build:benchmarks
-        working-directory: ${{ env.cwd }}
-
-      - run: npm run benchmarks -- mainnetBlocks:10 | tee output.txt
-        working-directory: ${{ env.cwd }}
-
-      # Run git stash in case github-action-benchmark has trouble switching to gh-pages branch due to differing package-locks
-      - run: git stash
-
-      - name: Compare benchmarks
-        uses: rhysd/github-action-benchmark@v1
-        with:
-          tool: 'benchmarkjs'
-          # Where the output from the benchmark tool is stored
-          output-file-path: ${{ env.cwd }}/output.txt
-          # Location of data in gh-pages branch
-          benchmark-data-dir-path: dev/bench/vm
-          # Enable alert commit comment (default alert threshold: 200%)
-          comment-on-alert: true
-          # GitHub API token to make a commit comment
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy to GitHub pages branch automatically (if on master)
-          auto-push: 'false'
-
-      # Re-apply git stash to prepare for saving back to cache.
-      # Avoids exit code 1 by checking if there are changes to be stashed first
-      - run: STASH_LIST=`git stash list` && [ ! -z $STASH_LIST ] && git stash apply || echo "No files to stash-apply. Skipping…"
+      - run: npm run test:consensus -- --source legacy --format blockchain --legacy-fork ${{ matrix.legacy_fork }}

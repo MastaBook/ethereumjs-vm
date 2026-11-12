@@ -1,0 +1,71 @@
+name: Browser
+on:
+  workflow_call:
+    inputs:
+      dep-cache-key:
+        required: true
+        type: string
+      workspaces:
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      dep-cache-key:
+        required: false
+        default: 'none'
+      workspaces:
+        required: false
+        type: string
+        default: ''
+
+env:
+  cwd: ${{github.workspace}}
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}-browser
+  cancel-in-progress: true
+
+jobs:
+  # Pull requests opt in with `test: browser`. A skipped job still
+  # merges. Master pushes and manual runs keep the suite.
+  test-all-browser:
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(join(github.event.pull_request.labels.*.name, ' '), 'test: browser')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      # Restore on the host, then test in Docker. actions/cache cannot reliably
+      # restore host-created caches inside a container job.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup-ethereumjs
+        with:
+          dep-cache-key: ${{ inputs.dep-cache-key }}
+
+      # Preinstalled Chromium (playwright@1.60.0) — no ~150MB download per run.
+      - name: Run browser tests (Playwright container)
+        env:
+          WORKSPACES: ${{ inputs.workspaces }}
+        run: |
+          args=(--workspaces)
+          if [ -n "$WORKSPACES" ]; then
+            args=()
+            IFS=',' read -ra WS <<< "$WORKSPACES"
+            for w in "${WS[@]}"; do
+              w="${w// /}"
+              [ -n "$w" ] && args+=(--workspace="$w")
+            done
+          fi
+          docker run --rm \
+            --ipc=host \
+            --init \
+            --user root \
+            -v "${{ github.workspace }}:${{ github.workspace }}" \
+            -w "${{ github.workspace }}" \
+            -e PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+            -e CI=true \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            npm run test:browser --if-present "${args[@]}"

@@ -1,0 +1,94 @@
+[**@ethereumjs/evm**](../README.md)
+
+***
+
+[@ethereumjs/evm](../README.md) / NobleBN254
+
+# Class: NobleBN254
+
+Defined in: [precompiles/bn254/noble.ts:110](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/evm/src/precompiles/bn254/noble.ts#L110)
+
+Implementation of the `EVMBN254Interface` using the `ethereum-cryptography (`@noble/curves`)
+JS library, see https://github.com/ethereum/js-ethereum-cryptography.
+
+This is the EVM default implementation.
+
+## Implements
+
+- [`EVMBN254Interface`](../type-aliases/EVMBN254Interface.md)
+
+## Constructors
+
+### Constructor
+
+> **new NobleBN254**(): `NobleBN254`
+
+#### Returns
+
+`NobleBN254`
+
+## Methods
+
+### add()
+
+> **add**(`input`): `Uint8Array`
+
+Defined in: [precompiles/bn254/noble.ts:111](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/evm/src/precompiles/bn254/noble.ts#L111)
+
+#### Parameters
+
+##### input
+
+`Uint8Array`
+
+#### Returns
+
+`Uint8Array`
+
+#### Implementation of
+
+`EVMBN254Interface.add`
+
+***
+
+### mul()
+
+> **mul**(`input`): `Uint8Array`
+
+Defined in: [precompiles/bn254/noble.ts:119](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/evm/src/precompiles/bn254/noble.ts#L119)
+
+#### Parameters
+
+##### input
+
+`Uint8Array`
+
+#### Returns
+
+`Uint8Array`
+
+#### Implementation of
+
+`EVMBN254Interface.mul`
+
+***
+
+### pairing()
+
+> **pairing**(`input`): `Uint8Array`
+
+Defined in: [precompiles/bn254/noble.ts:130](https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/evm/src/precompiles/bn254/noble.ts#L130)
+
+#### Parameters
+
+##### input
+
+`Uint8Array`
+
+#### Returns
+
+`Uint8Array`
+
+#### Implementation of
+
+`EVMBN254Interface.pairing`

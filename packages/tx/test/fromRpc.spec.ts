@@ -1,0 +1,119 @@
+import { Common, Hardfork, Mainnet, createCustomCommon } from '@ethereumjs/common'
+import { bytesToHex, randomBytes } from '@ethereumjs/util'
+import { assert, describe, it } from 'vitest'
+
+import {
+  TransactionType,
+  createTx,
+  createTxFromJSONRPCProvider,
+  createTxFromRPC,
+} from '../src/index.ts'
+import { normalizeTxParams } from '../src/util/general.ts'
+
+import { optimismTxData } from './testData/optimismTx.ts'
+import { rpcTxData } from './testData/rpcTx.ts'
+import { v0txData } from './testData/v0tx.ts'
+
+import type { TypedTxData } from '../src/index.ts'
+
+const txTypes = [
+  TransactionType.Legacy,
+  TransactionType.AccessListEIP2930,
+  TransactionType.FeeMarketEIP1559,
+]
+
+describe('[fromJSONRPCProvider]', () => {
+  it('fetches tx by hash and throws when RPC returns null', async () => {
+    const common = new Common({ chain: Mainnet, hardfork: Hardfork.London })
+    const provider = 'https://my.json.rpc.provider.com:8545'
+
+    const realFetch = fetch
+    //@ts-expect-error -- Typescript doesn't like us to replace global values
+
+    fetch = async (_url: string, req: any) => {
+      const json = JSON.parse(req.body)
+      if (json.params[0] === '0xed1960aa7d0d7b567c946d94331dddb37a1c67f51f30bf51f256ea40db88cfb0') {
+        const { rpcTxData } = await import(`./testData/rpcTx.js`)
+        return {
+          ok: true,
+          status: 200,
+          json: () => {
+            return {
+              result: rpcTxData,
+            }
+          },
+        }
+      } else {
+        return {
+          ok: true,
+          status: 200,
+          json: () => {
+            return {
+              result: null, // This is the value Infura returns if no transaction is found matching the provided hash
+            }
+          },
+        }
+      }
+    }
+
+    const txHash = '0xed1960aa7d0d7b567c946d94331dddb37a1c67f51f30bf51f256ea40db88cfb0'
+    const tx = await createTxFromJSONRPCProvider(provider, txHash, { common })
+    assert.strictEqual(
+      bytesToHex(tx.hash()),
+      txHash,
+      'generated correct tx from transaction RPC data',
+    )
+    try {
+      await createTxFromJSONRPCProvider(provider, bytesToHex(randomBytes(32)), {})
+      assert.fail('should throw')
+    } catch (err: any) {
+      assert.isTrue(
+        err.message.includes('No data returned from provider'),
+        'throws correct error when no tx returned',
+      )
+    }
+    //@ts-expect-error -- Assigning to a global function
+    fetch = realFetch
+  })
+})
+
+describe('[normalizeTxParams]', () => {
+  it('maps gas to gasLimit and preserves hashable fields', () => {
+    const normedTx = normalizeTxParams(rpcTxData)
+    const tx = createTx(normedTx)
+    assert.strictEqual(normedTx.gasLimit, 21000n, 'correctly converted "gas" to "gasLimit"')
+    assert.strictEqual(
+      bytesToHex(tx.hash()),
+      rpcTxData.hash,
+      'converted normed tx data to transaction object',
+    )
+  })
+})
+
+describe('[Tx]: fromRPC: interpret v/r/s values of 0x0 as undefined for Optimism system txs', () => {
+  it('leaves v, r, and s undefined for Optimism system txs', async () => {
+    for (const txType of txTypes) {
+      const tx = await createTxFromRPC({ ...optimismTxData, type: txType } as TypedTxData)
+      assert.isUndefined(tx.v)
+      assert.isUndefined(tx.s)
+      assert.isUndefined(tx.r)
+    }
+  })
+})
+
+// This test ensures that "normal" txs of non-legacy type are correctly decoded if the
+// `v` value is 0. This is the case in ~50% of the EIP2930 and EIP1559 txs
+// The `v` value is either 0 or 1 there.
+describe('[Tx]: fromRPC: ensure `v="0x0"` is correctly decoded for signed txs', () => {
+  it('marks typed txs with v=0x0 as signed', async () => {
+    for (const txType of txTypes) {
+      if (txType === TransactionType.Legacy) {
+        // legacy tx cannot have v=0
+        continue
+      }
+      const common = createCustomCommon({ chainId: 0x10f2c }, Mainnet)
+      const tx = await createTxFromRPC({ ...v0txData, type: txType } as TypedTxData, { common })
+      assert.isTrue(tx.isSigned())
+    }
+  })
+})
